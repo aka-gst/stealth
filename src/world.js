@@ -26,7 +26,7 @@ export function createWorld(def) {
         player: createPlayer(level.spawn),
         guards: level.guards.map(createGuard),
         alarm: createAlarm(),
-        /** Кейс: пока он не у игрока, ворота — просто ворота. */
+        /** Ключ от ворот: пока он не у игрока, ворота — просто ворота. */
         goal: level.goal ? { x: level.goal.x, y: level.goal.y, taken: false } : null,
         flow: makeFlowCache(level),
         noises: [],
@@ -413,20 +413,27 @@ function checkBodies(w, dt) {
 }
 
 /**
- * Ранг. Считает не скорость, а следы: прошёл ли объект так, будто тебя тут
- * не было. Скорость тоже показывается — но соревноваться в ней игрок
- * начинает сам, и только когда научился проходить чисто.
+ * Ранг. Считает только одно: заметили тебя или нет.
+ *
+ * Про убийства здесь нет ни слова, и это решение, а не упущение. Игра,
+ * которая всю дорогу ставит «D» за трупы, уже прочитала мораль — цифрой,
+ * вперёд, вместо игрока. Тогда и вспоминать в конце нечего: он давно
+ * знает, что ему скажут. Пусть счёт ведётся молча.
  */
 export function rankOf(w) {
-    const s = w.stats;
     const a = w.alarm;
-    if (!a.everAlarmed && s.killed === 0 && s.downed === 0) {
-        return { rank: 'S', text: 'Призрак: никто ничего не заметил' };
-    }
-    if (!a.everAlarmed && s.killed === 0) return { rank: 'A', text: 'Все живы, и никто не хватился' };
-    if (!a.everSpotted && s.killed === 0) return { rank: 'B', text: 'Переполох был, но тебя не видели' };
-    if (s.killed === 0) return { rank: 'C', text: 'Заметили, но все живы' };
-    return { rank: 'D', text: 'Громко' };
+    if (!a.everAlarmed) return { rank: 'S', text: 'Никто ничего не заметил' };
+    if (!a.everSpotted) return { rank: 'A', text: 'Переполох был, но тебя не видели' };
+    return { rank: 'B', text: 'Тебя видели' };
+}
+
+/** Что стало с каждым на этом уровне. Нужно ровно один раз — в самом конце. */
+export function fatesOf(w) {
+    return w.guards.map((g) => ({
+        name: g.name,
+        bio: g.bio,
+        fate: g.dead ? 'killed' : (g.down ? 'downed' : 'spared'),
+    }));
 }
 
 export function updateWorld(w, input, dt) {
@@ -510,13 +517,13 @@ export function updateWorld(w, input, dt) {
     if (w.goal && !w.goal.taken && Math.hypot(w.goal.x - p.x, w.goal.y - p.y) < 15) {
         w.goal.taken = true;
         w.events.push({ kind: 'pickup' });
-        say(w, 'Кейс у тебя. Теперь к северным воротам.', 3);
+        say(w, 'Ключ у тебя. Теперь к воротам.', 3);
     }
 
     if (p.dead) { w.done = 'lose'; w.doneT = 0; w.events.push({ kind: 'lose' }); return; }
     if (isExit(w.level, p.x, p.y)) {
         if (w.goal && !w.goal.taken) {
-            if (!w.hintT) say(w, 'Без кейса выходить незачем. Он на складе.', 2);
+            if (!w.hintT) say(w, 'Ворота заперты. Ключ на складе.', 2);
         } else if (!gateOpen(w)) {
             if (!w.hintT) say(w, 'Ворота заперты по тревоге. Спрячься и переждать.', 2);
         } else {

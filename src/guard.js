@@ -22,6 +22,15 @@ import { ALERT, SEARCH, CALM, spotted, disturb, sightMul, speedMul } from './ala
 export function createGuard(def, index) {
     return {
         id: `guard-${index}`,
+        /**
+         * Имя, одна строка жизни и то, что он бормочет себе под нос на
+         * маршруте. Человека надо встретить живым — иначе он навсегда
+         * останется фигурой на экране, и потом с ним ничего не случится.
+         */
+        name: def.name ?? '',
+        bio: def.bio ?? '',
+        lines: def.lines ?? [],
+        chatT: 5 + index * 3.5,
         x: def.at.x,
         y: def.at.y,
         vx: 0,
@@ -246,6 +255,17 @@ export function updateGuard(g, ctx, dt) {
 
     switch (g.state) {
         case 'patrol': {
+            // Болтовня себе под нос — только пока всё спокойно. Это не
+            // подсказка и не механика: это единственная возможность узнать,
+            // кто перед тобой, пока он ещё жив.
+            if (g.lines.length && alarm.state === CALM && !sees) {
+                g.chatT -= dt;
+                if (g.chatT <= 0) {
+                    g.chatT = 11 + Math.random() * 9;
+                    bark(g, g.lines[Math.floor(Math.random() * g.lines.length)], 2.6);
+                }
+            }
+
             const point = g.route[g.routeIndex % g.route.length];
             if (g.waitLeft > 0) {
                 brake(g, dt);

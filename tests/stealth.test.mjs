@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { room, px } from './helpers.mjs';
-import { createWorld, updateWorld, tryTakedown, toggleCarry, firePistol, rankOf } from '../src/world.js';
+import { createWorld, updateWorld, tryTakedown, toggleCarry, firePistol, rankOf, fatesOf } from '../src/world.js';
 import { GUARD, PLAYER } from '../src/tuning.js';
 import { SEARCH, ALERT } from '../src/alarm.js';
 
@@ -105,14 +105,30 @@ test('выстрел слышит весь объект', () => {
     assert.equal(world.ammo, 5);
 });
 
-test('чистый проход даёт ранг S, а тихое убийство — уже нет', () => {
+test('ранг молчит про убийства — это и есть замысел', () => {
     const clean = createWorld(def());
     assert.equal(rankOf(clean).rank, 'S');
 
-    const quiet = createWorld(def());
-    stand(quiet, -1);
-    tryTakedown(quiet, false);
-    assert.notEqual(rankOf(quiet).rank, 'S', 'тело — это уже след');
+    // Тихо снял двоих насмерть и никем не замечен — ранг тот же. Игра,
+    // которая ставит оценку за трупы, читает мораль вперёд игрока; тогда
+    // вспоминать в конце уже нечего.
+    const bloody = createWorld(def());
+    stand(bloody, -1);
+    tryTakedown(bloody, true);
+    assert.equal(rankOf(bloody).rank, 'S', 'ни слова про убитых');
+    assert.equal(rankOf(bloody).text.includes('убит'), false);
+});
+
+test('судьбы стражей считаются отдельно и по именам', () => {
+    const world = createWorld(def());
+    stand(world, -1);
+    tryTakedown(world, true);
+    const fates = fatesOf(world);
+    assert.equal(fates.length, 1);
+    assert.equal(fates[0].fate, 'killed');
+
+    const spared = createWorld(def());
+    assert.equal(fatesOf(spared)[0].fate, 'spared');
 });
 
 test('дошёл до ворот — уровень сдан', () => {

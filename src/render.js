@@ -835,7 +835,7 @@ function drawBottomHud(r, world) {
     if (world.player.dragging) { ctx.fillText('несу тело', slot, VIEW.h - 12); slot += 66; }
     if (world.goal?.taken) {
         ctx.fillStyle = '#d9c169';
-        ctx.fillText('кейс', slot, VIEW.h - 12);
+        ctx.fillText('ключ', slot, VIEW.h - 12);
     }
 
     if (world.hint) {
@@ -844,6 +844,63 @@ function drawBottomHud(r, world) {
         ctx.fillStyle = `rgba(230,238,250,${Math.min(1, world.hintT)})`;
         ctx.fillText(world.hint, VIEW.w / 2, VIEW.h - 34);
     }
+}
+
+/**
+ * Утро после побега.
+ *
+ * Здесь игра впервые говорит про убитых — и говорит только именами и одной
+ * строкой жизни на каждого. Ни оценки, ни числа, ни морали: всё это игрок
+ * поставит себе сам, и только поэтому оно сработает.
+ */
+export function drawEpilogue(r, data) {
+    const { ctx } = r;
+    reset(r);
+    ctx.fillStyle = '#0b0d13';
+    ctx.fillRect(0, 0, VIEW.w, VIEW.h);
+    ctx.textAlign = 'center';
+
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.fillStyle = '#cfd8e6';
+    ctx.fillText('УТРО', VIEW.w / 2, 46);
+
+    if (!data.killed.length) {
+        ctx.font = '13px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(210,222,238,0.9)';
+        ctx.fillText('Смену сдали все.', VIEW.w / 2, VIEW.h / 2 - 8);
+        ctx.fillStyle = 'rgba(180,195,214,0.7)';
+        ctx.fillText('Никто на объекте не знает, что ты там был.', VIEW.w / 2, VIEW.h / 2 + 16);
+    } else {
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(190,202,220,0.8)';
+        ctx.fillText('На утреннюю смену не вышли:', VIEW.w / 2, 76);
+
+        const top = 104;
+        const step = Math.min(24, (VIEW.h - top - 70) / Math.max(1, data.killed.length));
+        ctx.textAlign = 'left';
+        const left = Math.max(24, VIEW.w / 2 - 250);
+        data.killed.forEach((p, i) => {
+            const y = top + i * step;
+            ctx.font = '600 12px system-ui, sans-serif';
+            ctx.fillStyle = '#e6ecf6';
+            ctx.fillText(p.name, left, y);
+            ctx.font = '11px system-ui, sans-serif';
+            ctx.fillStyle = 'rgba(170,184,204,0.75)';
+            ctx.fillText(p.bio, left + 62, y);
+        });
+
+        ctx.textAlign = 'center';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(190,202,220,0.7)';
+        const rest = data.spared + data.downed;
+        if (rest > 0) {
+            ctx.fillText(`Остальные ${rest} вышли и ничего не поняли.`, VIEW.w / 2, VIEW.h - 58);
+        }
+    }
+
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(150,164,186,0.7)';
+    ctx.fillText('E — начать заново', VIEW.w / 2, VIEW.h - 24);
 }
 
 function drawEnd(r, world) {
@@ -863,13 +920,9 @@ function drawEnd(r, world) {
         ctx.font = '13px system-ui, sans-serif';
         ctx.fillStyle = 'rgba(226,234,246,0.9)';
         ctx.fillText(text, VIEW.w / 2, VIEW.h / 2 + 36);
-        const s = world.stats;
         ctx.font = '11px system-ui, sans-serif';
         ctx.fillStyle = 'rgba(200,210,224,0.75)';
-        ctx.fillText(
-            `${world.time.toFixed(1)} с · убито ${s.killed} · оглушено ${s.downed} · спрятано ${s.stowed}`,
-            VIEW.w / 2, VIEW.h / 2 + 58,
-        );
+        ctx.fillText(`${world.time.toFixed(1)} с`, VIEW.w / 2, VIEW.h / 2 + 58);
     } else {
         ctx.font = 'bold 30px system-ui, sans-serif';
         ctx.fillStyle = '#ff6b6b';

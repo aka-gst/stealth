@@ -8,8 +8,11 @@
 
 import { STEP, VIEW, fitView } from './tuning.js';
 import { LEVELS } from './levels.js';
-import { createWorld, updateWorld, useAction, tryTakedown, toggleBox, throwCoin, firePistol, say } from './world.js';
-import { createRenderer, draw } from './render.js';
+import {
+    createWorld, updateWorld, useAction, tryTakedown, toggleBox,
+    throwCoin, firePistol, say, fatesOf,
+} from './world.js';
+import { createRenderer, draw, drawEpilogue } from './render.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
 
@@ -42,6 +45,37 @@ for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
  * «0», перепрыгнуть — «N».
  */
 const SAVE = 'perimetr.level';
+/**
+ * Кого ты убил, кого оглушил, а мимо кого прошёл, — копится через всю
+ * кампанию и всплывает ровно один раз, в самом конце.
+ */
+const FATES = 'perimetr.fates';
+
+function loadFates() {
+    try { return JSON.parse(localStorage.getItem(FATES) ?? '{}') ?? {}; } catch { return {}; }
+}
+
+function saveFates(map) {
+    try { localStorage.setItem(FATES, JSON.stringify(map)); } catch { /* приватный режим */ }
+}
+
+/** Перепрохождение уровня переписывает его судьбы, а не добавляет вторые. */
+function recordFates(w) {
+    const map = loadFates();
+    map[w.levelName] = fatesOf(w).filter((p) => p.name);
+    saveFates(map);
+}
+
+function epilogueData() {
+    const all = Object.values(loadFates()).flat();
+    return {
+        killed: all.filter((p) => p.fate === 'killed'),
+        downed: all.filter((p) => p.fate === 'downed').length,
+        spared: all.filter((p) => p.fate === 'spared').length,
+    };
+}
+
+let epilogue = null;
 
 function loadIndex() {
     try {
@@ -89,6 +123,8 @@ if (location.search.includes('debug')) {
             return world;
         },
         level: (i) => { world = start(i); return world; },
+        epilogue: () => { epilogue = epilogueData(); return epilogue; },
+        fates: () => loadFates(),
         act: (lethal = false) => tryTakedown(world, lethal),
         use: () => useAction(world),
         box: () => toggleBox(world),
@@ -124,6 +160,20 @@ function loop(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
 
+    if (epilogue) {
+        const done = input.frame(dt, null, VIEW);
+        input.endFrame();
+        if (done.action || done.fire) {
+            epilogue = null;
+            saveFates({});
+            world = start(0);
+        } else {
+            drawEpilogue(renderer, epilogue);
+            requestAnimationFrame(loop);
+            return;
+        }
+    }
+
     const cam = {
         x: renderer.cam.x,
         y: renderer.cam.y,
@@ -139,8 +189,13 @@ function loop(now) {
     if (frame.reset) world = start(0);
 
     // Уровень сдан — дальше по кнопке, а не сам собой: итог надо прочитать.
+    if (world.done === 'win' && !world.recorded) {
+        world.recorded = true;
+        recordFates(world);
+    }
     if (world.done === 'win' && world.doneT > 0.6 && (frame.action || frame.fire)) {
-        world = start(world.last ? index : index + 1);
+        if (world.last) epilogue = epilogueData();
+        else world = start(index + 1);
     }
     if (world.done === 'lose' && world.doneT > 0.6 && (frame.action || frame.fire)) {
         world = start(index);
