@@ -11,6 +11,8 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 
 const PORT = Number(process.env.PORT ?? 4191);
+/** Сколько соседних портов пробовать, если свой занят. */
+const TRIES = 20;
 const ROOT = new URL('..', import.meta.url).pathname;
 
 const TYPES = {
@@ -23,7 +25,7 @@ const TYPES = {
     '.svg': 'image/svg+xml',
 };
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
     const path = join(ROOT, rel === '/' ? 'index.html' : rel);
@@ -39,4 +41,21 @@ createServer(async (req, res) => {
         res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
         res.end('нет такого файла');
     }
-}).listen(PORT, () => console.log(`ПЕРИМЕТР: http://localhost:${PORT}/`));
+});
+
+/*
+ * Порт может быть занят соседним проектом — их тут много, и все на
+ * четырёхтысячных. Падать из-за этого глупо: берём следующий свободный и
+ * говорим, какой взяли.
+ */
+let port = PORT;
+server.on('error', (err) => {
+    if (err.code !== 'EADDRINUSE' || port >= PORT + TRIES) {
+        console.error(err.message);
+        process.exit(1);
+    }
+    port += 1;
+    server.listen(port);
+});
+server.on('listening', () => console.log(`ПЕРИМЕТР: http://localhost:${port}/`));
+server.listen(port);
