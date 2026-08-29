@@ -60,12 +60,12 @@ body {
         display: grid;
         position: absolute;
         right: 6px; bottom: 6px;
-        grid-template-columns: repeat(2, 56px);
+        grid-template-columns: repeat(3, 52px);
         gap: 6px;
         touch-action: none;
     }
     #buttons button {
-        width: 56px; height: 44px;
+        width: 52px; height: 42px;
         border-radius: 8px;
         border: 1px solid #33405a;
         background: rgba(18, 24, 38, 0.72);

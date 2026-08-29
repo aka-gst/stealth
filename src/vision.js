@@ -52,11 +52,11 @@ export function canSee(level, g, target, sightMul = 1) {
     const dy = target.y - g.y;
     const dist = Math.hypot(dx, dy);
 
-    let feel = feelReach(lit);
+    let feel = feelReach(lit) * (target.expose ?? 1);
     if (target.grass) feel *= 0.6;
     if (dist <= feel) return !rayBlocked(level, g.x, g.y, target.x, target.y);
 
-    let reach = sightReach(lit, sightMul);
+    let reach = sightReach(lit, sightMul) * (target.expose ?? 1);
     if (target.grass) reach *= GUARD.grassSight;
     if (dist > reach) return false;
 

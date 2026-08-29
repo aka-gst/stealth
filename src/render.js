@@ -12,8 +12,8 @@
  * лучами, которыми проверяются, и укорачиваются о те же стены.
  */
 
-import { TILE, VIEW, GUARD, LIGHT, PLAYER } from './tuning.js';
-import { WALL, CRATE, GRASS, EXIT, GRAVEL, SOFT, tileAt } from './level.js';
+import { TILE, VIEW, GUARD, LIGHT, PLAYER, CAMERA, TRACKS } from './tuning.js';
+import { WALL, CRATE, GRASS, EXIT, GRAVEL, SOFT, tileAt, zoneAt } from './level.js';
 import { coneShape, sightReach } from './vision.js';
 import { lightShape, lightOn } from './light.js';
 import { moodOf, isOut } from './guard.js';
@@ -29,9 +29,10 @@ const COL = {
     crateTop: '#8a6f45',
     grass: '#22331f',
     grassTip: '#3d5a35',
-    gravel: '#3a3733',
-    gravelDot: '#6b6459',
-    soft: '#2e2823',
+    gravel: '#34322e',
+    gravelDot: '#565048',
+    soft: '#3b4149',
+    softTrack: '#232830',
     exit: '#3ba55d',
     player: '#d8e4f0',
     guard: '#c8ccd4',
@@ -55,49 +56,85 @@ export function createRenderer(canvas) {
     const ctx = canvas.getContext('2d');
     const shade = document.createElement('canvas');
     const shadeCtx = shade.getContext('2d');
-    return { canvas, ctx, shade, shadeCtx, dpr: 1, cam: { x: 0, y: 0 } };
+    return { canvas, ctx, shade, shadeCtx, dpr: 1, cam: { x: 0, y: 0, s: 1 }, zone: null };
 }
 
 /** Вернуть матрицу к «логический пиксель кадра», не потеряв плотность экрана. */
 const reset = (r) => r.ctx.setTransform(r.dpr, 0, 0, r.dpr, 0, 0);
 
-function camera(r, world) {
-    const p = world.player;
-    const halfW = VIEW.w / 2;
-    const halfH = VIEW.h / 2;
-    let x = p.x - halfW;
-    let y = p.y - halfH;
-    x = Math.max(0, Math.min(world.level.pixelW - VIEW.w, x));
-    y = Math.max(0, Math.min(world.level.pixelH - VIEW.h, y));
-    // Уровень уже кадра — центрируем, чтобы не липнуть к краю.
-    if (world.level.pixelW < VIEW.w) x = (world.level.pixelW - VIEW.w) / 2;
-    if (world.level.pixelH < VIEW.h) y = (world.level.pixelH - VIEW.h) / 2;
-    r.cam.x = Math.round(x);
-    r.cam.y = Math.round(y);
+/** Перейти в мировые координаты: масштаб комнаты плюс сдвиг камеры. */
+function worldSpace(r) {
+    const { ctx, dpr, cam } = r;
+    ctx.setTransform(dpr * cam.s, 0, 0, dpr * cam.s, -cam.x * cam.s * dpr, -cam.y * cam.s * dpr);
 }
 
-export function draw(r, world) {
+const clamp = (lo, v, hi) => Math.min(hi, Math.max(lo, v));
+
+/**
+ * Камера комнатами. Кадр прибит к той комнате, в которой стоит герой, и
+ * перещёлкивается на границе — как в старых MGS. Комната, которая целиком
+ * не влезает, досматривается прокруткой, но только внутри своих границ:
+ * камера не выезжает в соседнюю комнату, пока герой туда не вошёл.
+ */
+function camera(r, world, dt) {
+    const p = world.player;
+    const { level } = world;
+    const zone = zoneAt(level, p.x, p.y)
+        ?? { x0: 0, y0: 0, x1: level.pixelW, y1: level.pixelH, name: '' };
+    r.zone = zone;
+
+    const zw = zone.x1 - zone.x0;
+    const zh = zone.y1 - zone.y0;
+    const s = clamp(CAMERA.minScale, Math.min(VIEW.w / zw, VIEW.h / zh), CAMERA.maxScale);
+    const visW = VIEW.w / s;
+    const visH = VIEW.h / s;
+
+    let x = zw <= visW
+        ? (zone.x0 + zone.x1) / 2 - visW / 2
+        : clamp(zone.x0, p.x - visW / 2, zone.x1 - visW);
+    let y = zh <= visH
+        ? (zone.y0 + zone.y1) / 2 - visH / 2
+        : clamp(zone.y0, p.y - visH / 2, zone.y1 - visH);
+
+    // Комната может быть меньше кадра — тогда в кадр попадает и то, что
+    // вокруг неё. Но за край карты камера не выезжает: чёрная полоса по
+    // краю читается как ошибка, а не как замысел.
+    x = level.pixelW <= visW ? (level.pixelW - visW) / 2 : clamp(0, x, level.pixelW - visW);
+    y = level.pixelH <= visH ? (level.pixelH - visH) / 2 : clamp(0, y, level.pixelH - visH);
+
+    // Выглядывание из-за угла: камера уходит вперёд по взгляду и показывает
+    // то, чего герой ещё не видит собой.
+    if (p.peek > 0) {
+        x += Math.cos(p.angle) * CAMERA.peek * p.peek;
+        y += Math.sin(p.angle) * CAMERA.peek * p.peek;
+    }
+
+    const k = r.cam.s === 1 && r.cam.x === 0 ? 1 : 1 - Math.exp(-dt / CAMERA.snap);
+    r.cam.x += (x - r.cam.x) * k;
+    r.cam.y += (y - r.cam.y) * k;
+    r.cam.s += (s - r.cam.s) * k;
+}
+
+export function draw(r, world, dt = 1 / 60) {
     const { ctx } = r;
-    camera(r, world);
+    camera(r, world, dt);
 
     reset(r);
     ctx.fillStyle = '#0b0d13';
     ctx.fillRect(0, 0, VIEW.w, VIEW.h);
-    ctx.save();
-    ctx.translate(-r.cam.x, -r.cam.y);
 
+    worldSpace(r);
     drawFloor(ctx, world, r.cam);
     drawWalls(ctx, world, r.cam);
-    ctx.restore();
 
     drawDarkness(r, world);
 
-    ctx.save();
-    ctx.translate(-r.cam.x, -r.cam.y);
+    worldSpace(r);
     drawOutlines(ctx, world, r.cam);
     drawCones(ctx, world);
     drawNoises(ctx, world);
     drawLastKnown(ctx, world);
+    drawTracks(ctx, world);
     drawSwitches(ctx, world);
     drawGoal(ctx, world);
     drawCoins(ctx, world);
@@ -105,10 +142,10 @@ export function draw(r, world) {
     drawPlayer(ctx, world);
     drawBullets(ctx, world);
     drawMarks(ctx, world);
-    ctx.restore();
 
     drawObjective(r, world);
     drawRadar(r, world);
+    drawZoneName(r, world, dt);
     drawHud(r, world);
     if (world.done) drawEnd(r, world);
 }
@@ -117,8 +154,8 @@ function tilesInView(cam) {
     return {
         x0: Math.max(0, Math.floor(cam.x / TILE)),
         y0: Math.max(0, Math.floor(cam.y / TILE)),
-        x1: Math.ceil((cam.x + VIEW.w) / TILE),
-        y1: Math.ceil((cam.y + VIEW.h) / TILE),
+        x1: Math.ceil((cam.x + VIEW.w / cam.s) / TILE),
+        y1: Math.ceil((cam.y + VIEW.h / cam.s) / TILE),
     };
 }
 
@@ -141,12 +178,13 @@ function drawFloor(ctx, world, cam) {
                 ctx.fillStyle = COL.gravel;
                 ctx.fillRect(x, y, TILE, TILE);
                 ctx.fillStyle = COL.gravelDot;
-                for (let i = 0; i < 7; i += 1) {
+                for (let i = 0; i < 5; i += 1) {
                     const gx = x + ((tx * 13 + ty * 7 + i * 5) % (TILE - 3)) + 1;
                     const gy = y + ((tx * 5 + ty * 17 + i * 11) % (TILE - 3)) + 1;
                     ctx.fillRect(gx, gy, 2, 2);
                 }
             } else if (t === SOFT) {
+                // Снег светлее всего на карте — и потому на нём видно следы.
                 ctx.fillStyle = COL.soft;
                 ctx.fillRect(x, y, TILE, TILE);
             } else if (t === GRASS) {
@@ -223,7 +261,7 @@ function drawDarkness(r, world) {
     shadeCtx.fillRect(0, 0, VIEW.w, VIEW.h);
 
     shadeCtx.save();
-    shadeCtx.translate(-cam.x, -cam.y);
+    shadeCtx.setTransform(cam.s, 0, 0, cam.s, -cam.x * cam.s, -cam.y * cam.s);
     shadeCtx.globalCompositeOperation = 'destination-out';
     for (const l of world.lights) {
         if (!lightOn(l)) continue;
@@ -254,8 +292,8 @@ function drawDarkness(r, world) {
 
     // Тёплое свечение поверх: свет должен читаться как свет, а не как
     // «менее тёмное место».
+    worldSpace(r);
     ctx.save();
-    ctx.translate(-cam.x, -cam.y);
     ctx.globalCompositeOperation = 'lighter';
     for (const l of world.lights) {
         if (!lightOn(l)) continue;
@@ -283,8 +321,8 @@ function drawDarkness(r, world) {
 
     // Разбитый фонарь остаётся тёмным кольцом: игрок должен помнить, где
     // он был, и что света здесь больше не будет.
+    worldSpace(r);
     ctx.save();
-    ctx.translate(-cam.x, -cam.y);
     for (const l of world.lights) {
         if (lightOn(l)) continue;
         ctx.strokeStyle = 'rgba(120,130,150,0.28)';
@@ -383,6 +421,24 @@ function drawLastKnown(ctx, world) {
     ctx.restore();
 }
 
+/**
+ * Следы. Дорога помнит, где ты шёл, — и это единственная улика, которую
+ * нельзя ни спрятать, ни унести. Свежие темнее, старые выцветают.
+ */
+function drawTracks(ctx, world) {
+    for (const t of world.tracks) {
+        const fade = Math.max(0, t.life / TRACKS.life);
+        ctx.save();
+        ctx.globalAlpha = (t.faint ? 0.35 : 0.7) * fade;
+        ctx.fillStyle = COL.softTrack;
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.a);
+        ctx.fillRect(-3, -3, 5, 2.5);
+        ctx.fillRect(-2, 1.5, 5, 2.5);
+        ctx.restore();
+    }
+}
+
 /** Щиток на стене: единственный тихий способ сделать темноту. */
 function drawSwitches(ctx, world) {
     for (const sw of world.switches) {
@@ -413,8 +469,8 @@ function drawObjective(r, world) {
     const { ctx } = r;
     const goal = world.goal && !world.goal.taken ? world.goal : world.level.exit;
     const p = world.player;
-    const sx = goal.x - r.cam.x;
-    const sy = goal.y - r.cam.y;
+    const sx = (goal.x - r.cam.x) * r.cam.s;
+    const sy = (goal.y - r.cam.y) * r.cam.s;
     if (sx > 12 && sy > 12 && sx < VIEW.w - 12 && sy < VIEW.h - 12) return;
 
     const a = Math.atan2(goal.y - p.y, goal.x - p.x);
@@ -527,7 +583,30 @@ function drawPlayer(ctx, world) {
     const alpha = 0.55 + 0.45 * p.lit;
     ctx.save();
     ctx.globalAlpha = p.invuln > 0 && Math.floor(p.invuln * 12) % 2 ? 0.35 : alpha;
-    figure(ctx, p.x, p.y, p.angle, PLAYER.radius, COL.player, '#71809a');
+    if (p.pose === 'prone') {
+        // Лёжа силуэт вытянут по взгляду: сверху человек на земле — это
+        // полоса, а не круг, и отличать позу надо глазами.
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = COL.player;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, PLAYER.radius + 5, PLAYER.radius - 2.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#71809a';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.restore();
+    } else {
+        figure(ctx, p.x, p.y, p.angle, p.pose === 'hug' ? PLAYER.radius - 1 : PLAYER.radius, COL.player, '#71809a');
+        if (p.pose === 'hug') {
+            ctx.strokeStyle = 'rgba(150,200,255,0.55)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, PLAYER.radius + 2, p.angle + 1.9, p.angle - 1.9);
+            ctx.stroke();
+        }
+    }
     ctx.restore();
 
     if (p.mode === 'creep') {
@@ -536,6 +615,19 @@ function drawPlayer(ctx, world) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, PLAYER.radius + 4, 0, Math.PI * 2);
         ctx.stroke();
+    }
+
+    // Куда смотрит камера, когда выглядываешь: линия от героя к точке
+    // обзора. Без неё сдвиг кадра читается как поломка.
+    if (p.peek > 0.05) {
+        ctx.strokeStyle = `rgba(150,200,255,${0.35 * p.peek})`;
+        ctx.setLineDash([2, 4]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x + Math.cos(p.angle) * CAMERA.peek * p.peek, p.y + Math.sin(p.angle) * CAMERA.peek * p.peek);
+        ctx.stroke();
+        ctx.setLineDash([]);
     }
 }
 
@@ -572,25 +664,42 @@ function drawMarks(ctx, world) {
  * ровно тогда, когда становится нужнее всего: при тревоге игрок остаётся
  * с тем, что видит своими глазами.
  */
+/** Подпись комнаты — короткая, как смена кадра. */
+function drawZoneName(r, world, dt) {
+    const { ctx } = r;
+    const name = r.zone?.name ?? '';
+    if (name !== r.zoneShown) {
+        r.zoneShown = name;
+        r.zoneT = 2.4;
+    }
+    r.zoneT = Math.max(0, (r.zoneT ?? 0) - dt);
+    if (!r.zoneT || !name) return;
+    reset(r);
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(200,220,244,${Math.min(1, r.zoneT) * 0.75})`;
+    ctx.fillText(name.toUpperCase(), VIEW.w / 2, 24);
+}
+
 function drawRadar(r, world) {
     const { ctx, cam } = r;
     reset(r);
-    const w = 112;
+    const w = 118;
     const scale = w / world.level.pixelW;
     const h = world.level.pixelH * scale;
     const x0 = VIEW.w - w - 10;
-    const y0 = VIEW.h - h - 10;
+    const y0 = 10;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(8,12,20,0.72)';
+    ctx.fillStyle = 'rgba(4,18,12,0.78)';
     ctx.fillRect(x0, y0, w, h);
-    ctx.strokeStyle = 'rgba(110,140,180,0.35)';
+    ctx.strokeStyle = 'rgba(90,230,150,0.45)';
     ctx.lineWidth = 1;
     ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
 
     const dead = world.alarm.state === ALERT || world.alarm.state === SEARCH;
     if (dead) {
-        ctx.fillStyle = 'rgba(200,90,90,0.20)';
+        ctx.fillStyle = 'rgba(200,90,90,0.22)';
         for (let i = 0; i < 26; i += 1) {
             const sy = y0 + ((i * 37) % (h - 2)) + 1;
             ctx.fillRect(x0 + 1, sy, w - 2, 1);
@@ -608,7 +717,7 @@ function drawRadar(r, world) {
         for (let tx = 0; tx < level.w; tx += 1) {
             const t = level.tiles[ty * level.w + tx];
             if (t !== WALL && t !== CRATE) continue;
-            ctx.fillStyle = t === CRATE ? 'rgba(150,120,70,0.45)' : 'rgba(120,150,190,0.32)';
+            ctx.fillStyle = t === CRATE ? 'rgba(120,220,150,0.22)' : 'rgba(90,230,150,0.30)';
             ctx.fillRect(x0 + tx * TILE * scale, y0 + ty * TILE * scale, TILE * scale + 0.6, TILE * scale + 0.6);
         }
     }
@@ -625,18 +734,22 @@ function drawRadar(r, world) {
         const gx = x0 + g.x * scale;
         const gy = y0 + g.y * scale;
         const far = GUARD.sight * scale;
-        ctx.fillStyle = moodOf(g) === 'alert' ? 'rgba(255,90,90,0.35)' : 'rgba(255,210,120,0.22)';
+        ctx.fillStyle = moodOf(g) === 'alert' ? 'rgba(255,120,110,0.40)' : 'rgba(150,255,180,0.20)';
         ctx.beginPath();
         ctx.moveTo(gx, gy);
         ctx.arc(gx, gy, far, g.angle - GUARD.half, g.angle + GUARD.half);
         ctx.closePath();
         ctx.fill();
-        mark(g.x, g.y, '#ffd27a', 3);
+        mark(g.x, g.y, '#9dffc0', 3);
     }
 
     if (world.goal && !world.goal.taken) mark(world.goal.x, world.goal.y, '#d9c169', 4);
     mark(world.level.exit.x, world.level.exit.y, gateOpen(world) ? '#6ee08c' : '#c94f4f', 4);
-    mark(world.player.x, world.player.y, '#e8f0ff', 3);
+    mark(world.player.x, world.player.y, '#eaffff', 3);
+
+    // Строчная развёртка: экран, а не картинка.
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    for (let sy = y0 + 1; sy < y0 + h - 1; sy += 3) ctx.fillRect(x0 + 1, sy, w - 2, 1);
     ctx.restore();
 }
 
@@ -669,20 +782,24 @@ function drawHud(r, world) {
     // Камень видимости: полумрак от тьмы на глаз отличается плохо, а решает
     // он многое. Цитата из Thief, и она заслуженная.
     const lit = world.player.lit;
-    const x = VIEW.w - 96;
+    const x = 10;
+    const y = 34;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(x, 10, 86, 8);
+    ctx.fillRect(x, y, 86, 8);
     const litCol = lit < LIGHT.hidden ? '#4fb0ff' : (lit < LIGHT.bright ? '#ffce5c' : '#ff7a5c');
     ctx.fillStyle = litCol;
-    ctx.fillRect(x, 10, 86 * lit, 8);
+    ctx.fillRect(x, y, 86 * lit, 8);
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, 10.5, 85, 7);
+    ctx.strokeRect(x + 0.5, y + 0.5, 85, 7);
     ctx.font = '9px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(220,228,240,0.8)';
-    ctx.textAlign = 'right';
-    ctx.fillText(lit < LIGHT.hidden ? 'в тени' : (lit < LIGHT.bright ? 'полумрак' : 'на свету'), VIEW.w - 10, 30);
-    if (world.player.grass) ctx.fillText('в траве', VIEW.w - 10, 42);
+    ctx.textAlign = 'left';
+    const where = [lit < LIGHT.hidden ? 'в тени' : (lit < LIGHT.bright ? 'полумрак' : 'на свету')];
+    if (world.player.grass) where.push('в траве');
+    if (world.player.pose === 'prone') where.push('лёжа');
+    if (world.player.pose === 'hug') where.push('у стены');
+    ctx.fillText(where.join(' · '), x, y + 19);
 
     // Ресурсы внизу: три монетки и шесть патронов — это весь инвентарь.
     ctx.textAlign = 'left';
@@ -692,7 +809,9 @@ function drawHud(r, world) {
     ctx.fillText(hp, 10, VIEW.h - 12);
     ctx.fillText(`монет ${world.coinsLeft}`, 60, VIEW.h - 12);
     ctx.fillText(`патронов ${world.ammo}`, 130, VIEW.h - 12);
-    const mode = { creep: 'крадусь', walk: 'иду', run: 'бегу', box: 'коробка' }[world.player.mode];
+    const mode = {
+        creep: 'крадусь', walk: 'иду', run: 'бегу', box: 'коробка', prone: 'ползу', hug: 'у стены',
+    }[world.player.mode];
     ctx.fillText(mode, 215, VIEW.h - 12);
     if (world.player.dragging) ctx.fillText('несу тело', 260, VIEW.h - 12);
     if (world.goal?.taken) {

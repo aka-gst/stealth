@@ -11,10 +11,17 @@ import { YARD } from './levels.js';
 import { createWorld, updateWorld, useAction, tryTakedown, toggleBox, throwCoin, firePistol, say } from './world.js';
 import { createRenderer, draw } from './render.js';
 import { createInput } from './input.js';
+import { createAudio } from './audio.js';
 
 const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
+const audio = createAudio();
+
+// Браузер не даёт звучать до первого касания — заводим на первом же.
+for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
+    window.addEventListener(evt, () => audio.ensure(), { once: true });
+}
 
 let world = createWorld(YARD);
 say(world, YARD.brief, 5);
@@ -68,7 +75,13 @@ function loop(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
 
-    const cam = { x: renderer.cam.x, y: renderer.cam.y, px: world.player.x, py: world.player.y };
+    const cam = {
+        x: renderer.cam.x,
+        y: renderer.cam.y,
+        s: renderer.cam.s,
+        px: world.player.x,
+        py: world.player.y,
+    };
     const frame = input.frame(dt, cam, VIEW);
 
     if (frame.restart) {
@@ -80,6 +93,7 @@ function loop(now) {
         if (frame.action) useAction(world);
         if (frame.kill) tryTakedown(world, true);
         if (frame.box) toggleBox(world);
+        if (frame.mute) say(world, audio.toggle() ? 'Звук выключен.' : 'Звук включён.', 1.4);
         if (frame.coin && !throwCoin(world)) say(world, 'Монеты кончились. Подбери брошенные.', 1.6);
         if (frame.fire && !firePistol(world)) say(world, 'Патронов нет.', 1.4);
     }
@@ -88,12 +102,14 @@ function loop(now) {
     let guard = 0;
     while (acc >= STEP && guard < 240) {
         updateWorld(world, frame, STEP);
+        for (const e of world.events) audio.play(e);
         acc -= STEP;
         guard += 1;
     }
+    audio.update(world.alarm.state, dt);
 
     input.endFrame();
-    draw(renderer, world);
+    draw(renderer, world, dt);
 
     requestAnimationFrame(loop);
 }

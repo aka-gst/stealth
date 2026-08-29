@@ -68,6 +68,14 @@ export function buildLevel(def) {
         })),
         coins: (def.coins ?? []).map(toPixels),
         switches: (def.switches ?? []).map((sw) => ({ ...toPixels(sw), r: sw.r ?? 150 })),
+        // Комнаты для камеры: границы в клетках, не пересекаются.
+        zones: (def.zones ?? []).map((z) => ({
+            name: z.name,
+            x0: z.x0 * TILE,
+            y0: z.y0 * TILE,
+            x1: z.x1 * TILE,
+            y1: z.y1 * TILE,
+        })),
         lights: (def.lights ?? []).map((l) => ({ ...l, ...toPixels(l) })),
         ambient: def.ambient,
         brief: def.brief ?? '',
@@ -77,6 +85,14 @@ export function buildLevel(def) {
 /** Клетки в пикселях: центр клетки, а не её угол. */
 function toPixels(p) {
     return { x: (p.x + 0.5) * TILE, y: (p.y + 0.5) * TILE };
+}
+
+/** В какой комнате точка. Ни одной — значит камера следит по-старому. */
+export function zoneAt(level, px, py) {
+    for (const z of level.zones) {
+        if (px >= z.x0 && px < z.x1 && py >= z.y0 && py < z.y1) return z;
+    }
+    return null;
 }
 
 export function tileAt(level, px, py) {

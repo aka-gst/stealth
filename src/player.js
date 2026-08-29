@@ -7,7 +7,7 @@
  * половиной скорости.
  */
 
-import { PLAYER, NOISE, BOX } from './tuning.js';
+import { PLAYER, NOISE, BOX, POSE, FOOTFALL } from './tuning.js';
 import { moveCircle, surfaceAt } from './level.js';
 
 export function createPlayer(spawn) {
@@ -31,20 +31,42 @@ export function createPlayer(spawn) {
         speed: 0,
         /** В коробке и стоя — тебя не видят вовсе. Считает мир. */
         hidden: false,
+        /** Поза: стоя, прижавшись к стене или ползком. */
+        pose: 'stand',
+        /** Насколько высунулся из-за угла, 0..1. Двигает камеру. */
+        peek: 0,
+        /** Во сколько раз дальше тебя замечают. Меньше единицы — лучше. */
+        expose: 1,
+        footT: 0,
     };
 }
 
 export function playerSpeed(p, input) {
+    if (input.peek) return 0;
+    if (p.pose === 'prone') return POSE.proneSpeed;
+    if (p.pose === 'hug') return POSE.hugSpeed;
     if (input.box) return BOX.speed;
     if (input.creep) return PLAYER.creepSpeed;
     if (input.run && !p.dragging) return PLAYER.runSpeed;
     return PLAYER.walkSpeed;
 }
 
+/**
+ * Обе позы медленные, и обе беззвучные. Это не поблажка: за тишину платят
+ * скоростью всегда, и поза — просто ещё одна цена в той же валюте.
+ */
 export function noiseOf(p, input) {
+    if (p.pose !== 'stand') return NOISE.creep;
     if (input.creep || input.box) return NOISE.creep;
     if (input.run && !p.dragging) return NOISE.run;
     return NOISE.walk;
+}
+
+/** Во сколько раз дальше замечают в этой позе. */
+export function exposeOf(p) {
+    if (p.pose === 'prone') return p.grass ? POSE.proneSight * POSE.proneGrass : POSE.proneSight;
+    if (p.pose === 'hug') return POSE.hugSight;
+    return 1;
 }
 
 /**
@@ -56,9 +78,20 @@ export function updatePlayer(p, level, input, dt) {
 
     p.invuln = Math.max(0, p.invuln - dt);
 
+    // Выглядывание: стоишь на месте, а камера уходит вперёд по взгляду.
+    // Увидеть чужой конус раньше, чем он увидит тебя, — это и есть весь
+    // смысл угла как укрытия.
+    p.peek = input.peek
+        ? Math.min(1, p.peek + dt * 4.5)
+        : Math.max(0, p.peek - dt * 6);
+    p.pose = input.prone ? 'prone' : (input.peek && input.nearWall ? 'hug' : 'stand');
+    p.expose = exposeOf(p);
+
     let speed = playerSpeed(p, input);
     if (p.dragging) speed *= PLAYER.dragSpeed;
-    p.mode = input.box ? 'box' : (input.creep ? 'creep' : (input.run && !p.dragging ? 'run' : 'walk'));
+    p.mode = p.pose === 'prone' ? 'prone'
+        : (p.pose === 'hug' ? 'hug'
+            : (input.box ? 'box' : (input.creep ? 'creep' : (input.run && !p.dragging ? 'run' : 'walk'))));
 
     const len = Math.hypot(input.ax, input.ay);
     if (len > 0.01) {

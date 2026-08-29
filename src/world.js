@@ -7,8 +7,8 @@
  * не кнопкой «отвлечь».
  */
 
-import { NOISE, PLAYER, COIN, PISTOL, GUARD, TILE, BOX, LIGHT } from './tuning.js';
-import { buildLevel, makeFlowCache, hidesAt, isExit, crateNear, solidAt } from './level.js';
+import { NOISE, PLAYER, COIN, PISTOL, GUARD, TILE, BOX, LIGHT, TRACKS, FOOTFALL } from './tuning.js';
+import { buildLevel, makeFlowCache, hidesAt, isExit, crateNear, solidAt, surfaceAt, tileAt, SOFT } from './level.js';
 import { createLight, updateLights, illumination, breakLight, douseLight, lightOn } from './light.js';
 import { createGuard, updateGuard, hearNoise, noticeBody, knockOut, isBehind, isOut } from './guard.js';
 import { createPlayer, updatePlayer, hurtPlayer } from './player.js';
@@ -37,6 +37,12 @@ export function createWorld(def) {
         ammo: PISTOL.ammo,
         fireCd: 0,
         bodyCheck: 0,
+        /** Следы на мягкой земле: цепочка, по которой можно пойти. */
+        tracks: [],
+        trackT: 0,
+        footT: 0,
+        /** Что произошло в этом кадре — для звука. Мир сам не звучит. */
+        events: [],
         time: 0,
         done: null,
         doneT: 0,
@@ -69,6 +75,7 @@ export const gateOpen = (w) => w.alarm.state === CALM || w.alarm.state === CAUTI
 export function emitNoise(w, x, y, radius, kind = 'step') {
     if (radius <= 0) return;
     w.noises.push({ x, y, radius, life: 0.5, max: 0.5, kind });
+    w.events.push({ kind, x, y, radius });
     for (const g of w.guards) hearNoise(g, x, y, radius);
     // Выстрел слышит весь объект и понимает, что чужой внутри.
     if (kind === 'shot') disturb(w.alarm, x, y);
@@ -76,10 +83,42 @@ export function emitNoise(w, x, y, radius, kind = 'step') {
 
 const litAt = (w, x, y) => illumination(w.level, w.lights, x, y);
 
+/**
+ * Шаги и следы. Шаг звучит всегда — даже крадущийся, просто тихо; шум для
+ * стражей и звук для игрока это разные вещи, и путать их нельзя.
+ *
+ * Следы остаются только на мягкой земле и снегу. Они и есть та причина, по
+ * которой длинный обход не бесплатен: дорога помнит, где ты шёл.
+ */
+function stepFeet(w, dt) {
+    const p = w.player;
+    if (p.speed < 20 || p.dead) { w.footT = 0; return; }
+
+    w.footT -= dt;
+    if (w.footT > 0) return;
+    w.footT = FOOTFALL[p.mode] ?? FOOTFALL.walk;
+    w.events.push({ kind: 'foot', mode: p.mode, surface: surfaceAt(w.level, p.x, p.y) });
+
+    if (tileAt(w.level, p.x, p.y) !== SOFT) return;
+    w.trackT -= 1;
+    if (w.trackT > 0) return;
+    w.trackT = 2;
+    w.tracks.push({
+        x: p.x,
+        y: p.y,
+        a: p.angle,
+        t: w.time,
+        life: TRACKS.life,
+        faint: p.mode !== 'walk' && p.mode !== 'run',
+    });
+    if (w.tracks.length > 160) w.tracks.shift();
+}
+
 /** Снятие со спины. Отменяет бой, а не выигрывает его — в этом вся разница. */
 export function tryTakedown(w, lethal) {
     const p = w.player;
     if (p.dead || p.dragging) return false;
+    if (p.pose === 'prone') { say(w, 'С земли не снять — встань.', 1.4); return false; }
 
     let best = null;
     let bestD = PLAYER.reach;
@@ -130,6 +169,7 @@ export function flipSwitch(w) {
     }
     sw.out = LIGHT.relight;
     emitNoise(w, p.x, p.y, NOISE.switchClack, 'switch');
+    w.events.push({ kind: 'switch' });
     say(w, hit ? `Свет погас на ${LIGHT.relight} секунд.` : 'Щёлк. Здесь и так темно.', 2);
     return true;
 }
@@ -256,6 +296,7 @@ function stepBullets(w, dt) {
                     if (Math.hypot(l.x - b.x, l.y - b.y) < 10) {
                         breakLight(l);
                         b.life = 0;
+                        w.events.push({ kind: 'glass' });
                         say(w, 'Фонарь разбит. Здесь теперь темно.');
                         break;
                     }
@@ -306,6 +347,44 @@ function stepCoins(w, dt) {
 }
 
 /**
+ * Следы ищут глазами, как и тела, — только видно их хуже. Страж идёт к
+ * самому свежему из тех, что заметил; дойдя, замечает следующий и так
+ * тянется по цепочке. Никакого «идти по следу» в коде нет, оно получается
+ * само из того, что след — это просто ещё одна заметная точка.
+ */
+function checkTracks(w, dt) {
+    w.trackCheck = (w.trackCheck ?? 0) - dt;
+    if (w.trackCheck > 0) return;
+    w.trackCheck = 0.3;
+
+    const mul = sightMul(w.alarm);
+    for (const g of w.guards) {
+        if (isOut(g) || g.state === 'chase') continue;
+        let best = null;
+        for (const t of w.tracks) {
+            const target = {
+                x: t.x,
+                y: t.y,
+                lit: litAt(w, t.x, t.y),
+                grass: false,
+                expose: t.faint ? TRACKS.creepSight : TRACKS.sight,
+            };
+            if (!canSee(w.level, g, target, mul)) continue;
+            if (!best || t.t > best.t) best = t;
+        }
+        if (!best) continue;
+        if (g.state === 'suspect' && (g.trackTime ?? -1) >= best.t) continue;
+
+        g.state = 'suspect';
+        g.suspect = { x: best.x, y: best.y };
+        g.suspectT = NOISE.investigate;
+        g.trackTime = best.t;
+        g.arrivedAt = false;
+        if (!g.mark) { g.mark = '?'; g.markT = 1.4; g.say = 'Следы...'; g.sayT = 1.8; }
+    }
+}
+
+/**
  * Тела ищут глазами, как и игрока. Найденное тело поднимает ПОИСК, а не
  * ТРЕВОГУ: знать, что чужой на объекте, и знать, где он, — разные вещи.
  */
@@ -348,6 +427,7 @@ export function rankOf(w) {
 export function updateWorld(w, input, dt) {
     if (w.done) { w.doneT += dt; return; }
 
+    w.events.length = 0;
     w.time += dt;
     w.hintT = Math.max(0, w.hintT - dt);
     if (w.hintT <= 0) w.hint = '';
@@ -361,11 +441,18 @@ export function updateWorld(w, input, dt) {
     p.lit = litAt(w, p.x, p.y);
     p.grass = hidesAt(w.level, p.x, p.y);
 
-    const noise = updatePlayer(p, w.level, { ...input, box: w.box }, dt);
+    // Стена под рукой нужна, чтобы к ней прижаться: без неё выглядывание
+    // остаётся выглядыванием, но силуэт ломать не о что.
+    const nearWall = solidAt(w.level, p.x + Math.cos(p.angle) * 16, p.y + Math.sin(p.angle) * 16)
+        || solidAt(w.level, p.x + Math.cos(p.angle + 1.6) * 14, p.y + Math.sin(p.angle + 1.6) * 14)
+        || solidAt(w.level, p.x + Math.cos(p.angle - 1.6) * 14, p.y + Math.sin(p.angle - 1.6) * 14);
+
+    const noise = updatePlayer(p, w.level, { ...input, box: w.box, nearWall }, dt);
     // Коробка прячет только неподвижного и только пока никто не гонится:
     // если тебя уже увидели, все знают, кто там под ящиком.
     p.hidden = w.box && p.speed < 8 && !w.guards.some((g) => g.state === 'chase');
     if (noise > 0) emitNoise(w, p.x, p.y, noise, 'step');
+    stepFeet(w, dt);
 
     // Тело едет за игроком, но не сквозь стены.
     if (p.dragging) {
@@ -400,20 +487,27 @@ export function updateWorld(w, input, dt) {
         }
     }
 
+    const wasAlarm = w.alarm.state;
     checkBodies(w, dt);
+    checkTracks(w, dt);
+    for (const t of w.tracks) t.life -= dt;
+    if (w.tracks.length && w.tracks[0].life <= 0) w.tracks = w.tracks.filter((t) => t.life > 0);
     stepBullets(w, dt);
     stepCoins(w, dt);
     updateAlarm(w.alarm, dt);
+
+    if (w.alarm.state !== wasAlarm) w.events.push({ kind: `alarm-${w.alarm.state}` });
 
     for (const n of w.noises) n.life -= dt;
     w.noises = w.noises.filter((n) => n.life > 0);
 
     if (w.goal && !w.goal.taken && Math.hypot(w.goal.x - p.x, w.goal.y - p.y) < 15) {
         w.goal.taken = true;
+        w.events.push({ kind: 'pickup' });
         say(w, 'Кейс у тебя. Теперь к северным воротам.', 3);
     }
 
-    if (p.dead) { w.done = 'lose'; w.doneT = 0; return; }
+    if (p.dead) { w.done = 'lose'; w.doneT = 0; w.events.push({ kind: 'lose' }); return; }
     if (isExit(w.level, p.x, p.y)) {
         if (w.goal && !w.goal.taken) {
             if (!w.hintT) say(w, 'Без кейса выходить незачем. Он на складе.', 2);
@@ -422,6 +516,7 @@ export function updateWorld(w, input, dt) {
         } else {
             w.done = 'win';
             w.doneT = 0;
+            w.events.push({ kind: 'win' });
         }
     }
 }
