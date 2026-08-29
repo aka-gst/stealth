@@ -21,29 +21,34 @@ import { ALARM_NAMES, CALM, ALERT, SEARCH, CAUTION, sightMul } from './alarm.js'
 import { rankOf, gateOpen } from './world.js';
 
 const COL = {
-    floor: '#2a2d35',
-    floorAlt: '#24272f',
-    wall: '#464c59',
-    wallTop: '#5b6272',
-    crate: '#6b5533',
-    crateTop: '#8a6f45',
-    grass: '#22331f',
-    grassTip: '#3d5a35',
-    gravel: '#34322e',
-    gravelDot: '#565048',
-    soft: '#3b4149',
-    softTrack: '#232830',
-    exit: '#3ba55d',
-    player: '#d8e4f0',
-    guard: '#c8ccd4',
-    guardDown: '#7c8494',
-    guardDead: '#8a3b3b',
+    // Палитра из старого Metal Gear: земля тёплая, стены светлее пола и с
+    // видимой гранью, всё насыщенное. Тьма здесь — приправа отдельных
+    // уровней, а не общее состояние: механику, которую ещё не объяснили,
+    // нельзя вдобавок прятать в темноте.
+    floor: '#4b4a3c',
+    floorAlt: '#454434',
+    wall: '#6a7180',
+    wallTop: '#8d95a6',
+    wallEdge: '#3c4150',
+    crate: '#8a6636',
+    crateTop: '#ab8149',
+    grass: '#33512c',
+    grassTip: '#5c8a4c',
+    gravel: '#5f584a',
+    gravelDot: '#918872',
+    soft: '#8d97a6',
+    softTrack: '#5d6674',
+    exit: '#49c46d',
+    player: '#f0f4fa',
+    guard: '#d9dde5',
+    guardDown: '#8d95a4',
+    guardDead: '#a24040',
 };
 
 const MOOD_CONE = {
-    calm: 'rgba(150, 190, 255, 0.13)',
-    suspect: 'rgba(255, 206, 92, 0.20)',
-    alert: 'rgba(255, 86, 86, 0.24)',
+    calm: 'rgba(120, 175, 255, 0.20)',
+    suspect: 'rgba(255, 196, 60, 0.26)',
+    alert: 'rgba(255, 70, 70, 0.30)',
 };
 
 const MOOD_EDGE = {
@@ -102,13 +107,6 @@ function camera(r, world, dt) {
     x = level.pixelW <= visW ? (level.pixelW - visW) / 2 : clamp(0, x, level.pixelW - visW);
     y = level.pixelH <= visH ? (level.pixelH - visH) / 2 : clamp(0, y, level.pixelH - visH);
 
-    // Выглядывание из-за угла: камера уходит вперёд по взгляду и показывает
-    // то, чего герой ещё не видит собой.
-    if (p.peek > 0) {
-        x += Math.cos(p.angle) * CAMERA.peek * p.peek;
-        y += Math.sin(p.angle) * CAMERA.peek * p.peek;
-    }
-
     const k = r.cam.s === 1 && r.cam.x === 0 ? 1 : 1 - Math.exp(-dt / CAMERA.snap);
     r.cam.x += (x - r.cam.x) * k;
     r.cam.y += (y - r.cam.y) * k;
@@ -120,7 +118,7 @@ export function draw(r, world, dt = 1 / 60) {
     camera(r, world, dt);
 
     reset(r);
-    ctx.fillStyle = '#0b0d13';
+    ctx.fillStyle = '#14161c';
     ctx.fillRect(0, 0, VIEW.w, VIEW.h);
 
     worldSpace(r);
@@ -230,10 +228,14 @@ function drawWalls(ctx, world, cam) {
 
             ctx.fillStyle = t === CRATE ? COL.crate : COL.wall;
             ctx.fillRect(x, y, TILE, TILE);
-            // Верхняя грань светлее — так вид сверху перестаёт быть плоским
-            // и видно, где стена, а где пол.
+            // Верхняя грань светлее, нижняя — тёмная полоса. Так у стены
+            // появляется толщина, и вид сверху перестаёт быть плоским.
             ctx.fillStyle = t === CRATE ? COL.crateTop : COL.wallTop;
-            ctx.fillRect(x, y, TILE, solidBelow ? TILE : TILE - 6);
+            ctx.fillRect(x, y, TILE, solidBelow ? TILE : TILE - 7);
+            if (!solidBelow) {
+                ctx.fillStyle = COL.wallEdge;
+                ctx.fillRect(x, y + TILE - 3, TILE, 3);
+            }
 
             if (t === CRATE) {
                 ctx.strokeStyle = 'rgba(0,0,0,0.35)';
@@ -347,7 +349,7 @@ function drawDarkness(r, world) {
 function drawOutlines(ctx, world, cam) {
     const { level } = world;
     const { x0, y0, x1, y1 } = tilesInView(cam);
-    ctx.strokeStyle = 'rgba(128,150,190,0.20)';
+    ctx.strokeStyle = 'rgba(20,26,40,0.30)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let ty = y0; ty < Math.min(level.h, y1); ty += 1) {
@@ -538,7 +540,7 @@ function drawGuards(ctx, world) {
             ctx.restore();
             continue;
         }
-        figure(ctx, g.x, g.y, g.angle, GUARD.radius, COL.guard, '#5c6472');
+        figure(ctx, g.x, g.y, g.angle, GUARD.radius, COL.guard, '#2b3140');
 
         if (g.aim > 0.05) {
             // Замах видно: это приглашение уйти с линии, а не наказание.
@@ -596,12 +598,12 @@ function drawPlayer(ctx, world) {
         ctx.beginPath();
         ctx.ellipse(0, 0, PLAYER.radius + 5, PLAYER.radius - 2.5, 0, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = '#71809a';
+        ctx.strokeStyle = '#243049';
         ctx.lineWidth = 1.2;
         ctx.stroke();
         ctx.restore();
     } else {
-        figure(ctx, p.x, p.y, p.angle, p.pose === 'hug' ? PLAYER.radius - 1 : PLAYER.radius, COL.player, '#71809a');
+        figure(ctx, p.x, p.y, p.angle, p.pose === 'hug' ? PLAYER.radius - 1 : PLAYER.radius, COL.player, '#243049');
         if (p.pose === 'hug') {
             ctx.strokeStyle = 'rgba(150,200,255,0.55)';
             ctx.lineWidth = 1.5;
@@ -620,18 +622,7 @@ function drawPlayer(ctx, world) {
         ctx.stroke();
     }
 
-    // Куда смотрит камера, когда выглядываешь: линия от героя к точке
-    // обзора. Без неё сдвиг кадра читается как поломка.
-    if (p.peek > 0.05) {
-        ctx.strokeStyle = `rgba(150,200,255,${0.35 * p.peek})`;
-        ctx.setLineDash([2, 4]);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x + Math.cos(p.angle) * CAMERA.peek * p.peek, p.y + Math.sin(p.angle) * CAMERA.peek * p.peek);
-        ctx.stroke();
-        ctx.setLineDash([]);
-    }
+
 }
 
 function drawBullets(ctx, world) {
@@ -769,13 +760,16 @@ function drawHud(r, world) {
     // ожидание работает, иначе он не станет ждать.
     const label = ALARM_NAMES[a.state];
     const colours = {
-        [CALM]: '#5f6b7f',
+        [CALM]: '#aab6c8',
         [ALERT]: '#ff5c5c',
         [SEARCH]: '#ffb44c',
         [CAUTION]: '#ffe08a',
     };
     ctx.font = 'bold 12px system-ui, sans-serif';
     ctx.textAlign = 'left';
+    // Подложка под строкой состояния: на светлом полу белый текст пропадает.
+    ctx.fillStyle = 'rgba(10,14,22,0.45)';
+    ctx.fillRect(4, 6, 118, 16);
     ctx.fillStyle = colours[a.state];
     ctx.fillText(label.toUpperCase(), 10, 18);
     if (world.levelNo) {
@@ -823,6 +817,8 @@ function drawHud(r, world) {
 function drawBottomHud(r, world) {
     const { ctx } = r;
     reset(r);
+    ctx.fillStyle = 'rgba(10,14,22,0.45)';
+    ctx.fillRect(0, VIEW.h - 26, VIEW.w, 26);
     ctx.textAlign = 'left';
     ctx.font = '11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(220,228,240,0.85)';

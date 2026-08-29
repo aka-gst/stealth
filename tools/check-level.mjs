@@ -117,7 +117,12 @@ function run({ level, kind, limit = 300 }) {
     while (t < limit && !w.done) {
         const aim = target(w);
         // Заперты ворота — прячемся, а не топчемся под ними.
-        hiding = kind !== 'напролом' && !gateOpen(w) && (!w.goal || w.goal.taken);
+        // Прятаться приходится по двум причинам: ворота заперты тревогой
+        // или тебя продырявили. Второе — обычный ход громкого прохождения,
+        // а не поражение: отсидеться и выйти, когда объект успокоится.
+        const hurt = kind === 'громко' && w.player.hp <= 2 && w.alarm.state !== 'calm';
+        hiding = kind !== 'напролом'
+            && (hurt || (!gateOpen(w) && (!w.goal || w.goal.taken)));
 
         refresh -= STEP;
         if (!field || refresh <= 0) {
@@ -151,7 +156,7 @@ function run({ level, kind, limit = 300 }) {
             }
         }
 
-        if (kind === 'громко') {
+        if (kind === 'громко' && !hiding) {
             for (const g of w.guards) {
                 if (isOut(g)) continue;
                 if (Math.hypot(g.x - w.player.x, g.y - w.player.y) < 150) {

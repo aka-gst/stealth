@@ -19,7 +19,6 @@ export function createInput(canvas) {
     const edges = new Set();
     let creepToggle = false;
     let proneToggle = false;
-    let peekHeld = false;
     const mouse = { x: 0, y: 0, seen: 0, down: false };
     const stick = { active: false, ox: 0, oy: 0, x: 0, y: 0, id: null };
     const taps = new Set();
@@ -86,16 +85,6 @@ export function createInput(canvas) {
         proneBtn.addEventListener('touchstart', flip, { passive: false });
         proneBtn.addEventListener('mousedown', flip);
     }
-    const peekBtn = document.getElementById('b-peek');
-    if (peekBtn) {
-        const on = (e) => { peekHeld = true; peekBtn.classList.add('on'); e.preventDefault(); };
-        const off = () => { peekHeld = false; peekBtn.classList.remove('on'); };
-        peekBtn.addEventListener('touchstart', on, { passive: false });
-        peekBtn.addEventListener('touchend', off);
-        peekBtn.addEventListener('touchcancel', off);
-        peekBtn.addEventListener('mousedown', on);
-        window.addEventListener('mouseup', off);
-    }
 
     for (const [id, code] of [['b-act', 'KeyE'], ['b-kill', 'KeyF'], ['b-coin', 'Coin'], ['b-fire', 'Fire'], ['b-box', 'KeyB']]) {
         const el = document.getElementById(id);
@@ -152,7 +141,6 @@ export function createInput(canvas) {
                 fire: edges.has('Space') || edges.has('Fire'),
                 box: edges.has('KeyB'),
                 prone: proneToggle,
-                peek: keys.has('KeyV') || peekHeld,
                 mute: edges.has('KeyM'),
                 restart: edges.has('KeyR'),
                 next: edges.has('KeyN'),

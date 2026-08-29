@@ -192,13 +192,18 @@ export function updateGuard(g, ctx, dt) {
     const rules = ctx.rules ?? {};
     const mulSight = sightMul(alarm) * (rules.sight ?? 1);
     const mulSpeed = speedMul(alarm) * (rules.speed ?? 1);
-    const noticeNeed = GUARD.notice * (rules.notice ?? 1);
+    const noticeBase = GUARD.notice * (rules.notice ?? 1);
     const memory = GUARD.memory * (rules.memory ?? 1);
 
     // Зрение считается раньше состояний: увидеть можно в любом из них.
     // Коробка не спасает того, на кого наткнулись вплотную.
     const boxed = player.hidden && Math.hypot(player.x - g.x, player.y - g.y) > BOX.bump;
     const sees = !player.dead && !boxed && canSee(level, g, player, mulSight);
+    // Чем ближе, тем быстрее узнают: у самого носа — почти мгновенно, на
+    // пределе дальности — приглядываются.
+    const dist = Math.hypot(player.x - g.x, player.y - g.y);
+    const noticeNeed = noticeBase
+        * Math.max(GUARD.noticeNear, Math.min(1, dist / (GUARD.sight * mulSight)));
     if (sees) {
         g.notice += dt;
         if (g.notice >= noticeNeed) {
@@ -282,7 +287,6 @@ export function updateGuard(g, ctx, dt) {
             if (sees) g.lastSeen = { x: player.x, y: player.y };
             const point = (rules.backup === false ? g.lastSeen : alarm.point)
                 ?? g.lastSeen ?? { x: player.x, y: player.y };
-            const dist = Math.hypot(player.x - g.x, player.y - g.y);
             const shootable = sees && dist < GUARD.shootRange;
 
             if (shootable) {
