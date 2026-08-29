@@ -80,7 +80,7 @@ function camera(r, world, dt) {
     const p = world.player;
     const { level } = world;
     const zone = zoneAt(level, p.x, p.y)
-        ?? { x0: 0, y0: 0, x1: level.pixelW, y1: level.pixelH, name: '' };
+        ?? { x0: 0, y0: 0, x1: level.pixelW, y1: level.pixelH, name: world.levelName ?? '' };
     r.zone = zone;
 
     const zw = zone.x1 - zone.x0;
@@ -257,7 +257,10 @@ function drawDarkness(r, world) {
 
     shadeCtx.setTransform(1, 0, 0, 1, 0, 0);
     shadeCtx.globalCompositeOperation = 'source-over';
-    shadeCtx.fillStyle = 'rgba(5,7,14,0.72)';
+    // Насколько темно, решает уровень. В обучающих комнатах светло: правило,
+    // которое ещё не объяснили, не должно вдобавок прятаться в темноте.
+    const ambient = world.level.ambient ?? 0;
+    shadeCtx.fillStyle = `rgba(5,7,14,${(0.72 * (1 - ambient)).toFixed(3)})`;
     shadeCtx.fillRect(0, 0, VIEW.w, VIEW.h);
 
     shadeCtx.save();
@@ -667,7 +670,7 @@ function drawMarks(ctx, world) {
 /** Подпись комнаты — короткая, как смена кадра. */
 function drawZoneName(r, world, dt) {
     const { ctx } = r;
-    const name = r.zone?.name ?? '';
+    const name = r.zone?.name || world.levelName || '';
     if (name !== r.zoneShown) {
         r.zoneShown = name;
         r.zoneT = 2.4;
@@ -683,6 +686,10 @@ function drawZoneName(r, world, dt) {
 
 function drawRadar(r, world) {
     const { ctx, cam } = r;
+    // Радар нужен там, где комнату не видно целиком. В маленькой комнате он
+    // не помогает, а закрывает собой её угол — вместе с воротами.
+    const needed = world.rules.radar ?? (world.level.pixelW > VIEW.w || world.level.pixelH > VIEW.h);
+    if (!needed) return;
     reset(r);
     const w = 118;
     const scale = w / world.level.pixelW;
@@ -771,6 +778,11 @@ function drawHud(r, world) {
     ctx.textAlign = 'left';
     ctx.fillStyle = colours[a.state];
     ctx.fillText(label.toUpperCase(), 10, 18);
+    if (world.levelNo) {
+        ctx.font = '9px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(160,175,200,0.7)';
+        ctx.fillText(`${world.levelNo} / ${world.levelTotal}`, 70, 18);
+    }
     if (a.state === SEARCH || a.state === CAUTION) {
         const total = a.state === SEARCH ? 20 : 45;
         ctx.fillStyle = 'rgba(255,255,255,0.15)';
@@ -779,9 +791,12 @@ function drawHud(r, world) {
         ctx.fillRect(10, 22, 90 * Math.max(0, a.t / total), 3);
     }
 
-    // Камень видимости: полумрак от тьмы на глаз отличается плохо, а решает
-    // он многое. Цитата из Thief, и она заслуженная.
+    // Камень видимости показываем там, где свет вообще что-то решает.
+    // В светлой комнате полная полоска — просто шум на экране.
+    const lightMatters = world.rules.light
+        ?? (world.lights.length > 0 || (world.level.ambient ?? 0) < 0.6);
     const lit = world.player.lit;
+    if (!lightMatters) return drawBottomHud(r, world);
     const x = 10;
     const y = 34;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
@@ -801,22 +816,30 @@ function drawHud(r, world) {
     if (world.player.pose === 'hug') where.push('у стены');
     ctx.fillText(where.join(' · '), x, y + 19);
 
-    // Ресурсы внизу: три монетки и шесть патронов — это весь инвентарь.
+    drawBottomHud(r, world);
+}
+
+/** Нижняя строка: что у тебя есть и что ты сейчас делаешь. */
+function drawBottomHud(r, world) {
+    const { ctx } = r;
+    reset(r);
     ctx.textAlign = 'left';
     ctx.font = '11px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(220,228,240,0.85)';
     const hp = '♥'.repeat(world.player.hp) + '·'.repeat(Math.max(0, PLAYER.hp - world.player.hp));
     ctx.fillText(hp, 10, VIEW.h - 12);
-    ctx.fillText(`монет ${world.coinsLeft}`, 60, VIEW.h - 12);
-    ctx.fillText(`патронов ${world.ammo}`, 130, VIEW.h - 12);
+    let slot = 60;
+    if (world.rules.coins !== 0) { ctx.fillText(`монет ${world.coinsLeft}`, slot, VIEW.h - 12); slot += 70; }
+    if (world.rules.ammo !== 0) { ctx.fillText(`патронов ${world.ammo}`, slot, VIEW.h - 12); slot += 85; }
     const mode = {
         creep: 'крадусь', walk: 'иду', run: 'бегу', box: 'коробка', prone: 'ползу', hug: 'у стены',
     }[world.player.mode];
-    ctx.fillText(mode, 215, VIEW.h - 12);
-    if (world.player.dragging) ctx.fillText('несу тело', 260, VIEW.h - 12);
+    ctx.fillText(mode, slot, VIEW.h - 12);
+    slot += 60;
+    if (world.player.dragging) { ctx.fillText('несу тело', slot, VIEW.h - 12); slot += 66; }
     if (world.goal?.taken) {
         ctx.fillStyle = '#d9c169';
-        ctx.fillText('кейс', 330, VIEW.h - 12);
+        ctx.fillText('кейс', slot, VIEW.h - 12);
     }
 
     if (world.hint) {
@@ -838,7 +861,7 @@ function drawEnd(r, world) {
         const { rank, text } = rankOf(world);
         ctx.font = 'bold 30px system-ui, sans-serif';
         ctx.fillStyle = '#8ce0a8';
-        ctx.fillText('ВЫШЕЛ', VIEW.w / 2, VIEW.h / 2 - 34);
+        ctx.fillText(world.last ? 'ОБЪЕКТ СДАН' : 'ВЫШЕЛ', VIEW.w / 2, VIEW.h / 2 - 34);
         ctx.font = 'bold 44px system-ui, sans-serif';
         ctx.fillText(rank, VIEW.w / 2, VIEW.h / 2 + 12);
         ctx.font = '13px system-ui, sans-serif';
@@ -858,5 +881,6 @@ function drawEnd(r, world) {
     }
     ctx.font = '12px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(210,220,236,0.8)';
-    ctx.fillText('R — заново', VIEW.w / 2, VIEW.h / 2 + 88);
+    const next = world.done === 'win' && !world.last ? 'E или пробел — дальше · ' : '';
+    ctx.fillText(`${next}R — заново`, VIEW.w / 2, VIEW.h / 2 + 88);
 }

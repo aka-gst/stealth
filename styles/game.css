@@ -2,8 +2,11 @@
 
 * { box-sizing: border-box; }
 
+html { touch-action: manipulation; }
+
 body {
     margin: 0;
+    touch-action: manipulation;
     background: #07090f;
     color: #cdd6e4;
     font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;

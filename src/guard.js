@@ -171,7 +171,7 @@ export function updateGuard(g, ctx, dt) {
     if (g.down) {
         // Спрятанный не очнётся: спрятать тело — значит решить задачу
         // совсем, а не отложить её.
-        if (g.stowed) return;
+        if (g.stowed || ctx.rules?.wake === false) return;
         // Оглушённый приходит в себя — и, если его не спрятали, поднимает
         // тревогу. Оглушить и бросить посреди двора значит отложить провал,
         // а не отменить его.
@@ -189,8 +189,11 @@ export function updateGuard(g, ctx, dt) {
     }
 
     const { level, alarm, player } = ctx;
-    const mulSight = sightMul(alarm);
-    const mulSpeed = speedMul(alarm);
+    const rules = ctx.rules ?? {};
+    const mulSight = sightMul(alarm) * (rules.sight ?? 1);
+    const mulSpeed = speedMul(alarm) * (rules.speed ?? 1);
+    const noticeNeed = GUARD.notice * (rules.notice ?? 1);
+    const memory = GUARD.memory * (rules.memory ?? 1);
 
     // Зрение считается раньше состояний: увидеть можно в любом из них.
     // Коробка не спасает того, на кого наткнулись вплотную.
@@ -198,15 +201,18 @@ export function updateGuard(g, ctx, dt) {
     const sees = !player.dead && !boxed && canSee(level, g, player, mulSight);
     if (sees) {
         g.notice += dt;
-        if (g.notice >= GUARD.notice) {
+        if (g.notice >= noticeNeed) {
             if (g.state !== 'chase') {
                 mark(g, '!', 2);
                 bark(g, 'Стой!', 2);
                 // Крик — тоже шум: один увидевший собирает весь объект.
-                ctx.noise(g.x, g.y, NOISE.shout, 'shout');
+                // Пока обучение, кричать некому: гонится только он сам.
+                if (rules.backup !== false) ctx.noise(g.x, g.y, NOISE.shout, 'shout');
             }
             g.state = 'chase';
-            spotted(alarm, player.x, player.y);
+            g.lastSeen = { x: player.x, y: player.y };
+            if (rules.backup !== false) spotted(alarm, player.x, player.y);
+            else { alarm.everSpotted = true; g.memoryLeft = memory; }
         }
     } else {
         g.notice = Math.max(0, g.notice - dt * 0.8);
@@ -273,7 +279,9 @@ export function updateGuard(g, ctx, dt) {
         }
 
         case 'chase': {
-            const point = alarm.point ?? { x: player.x, y: player.y };
+            if (sees) g.lastSeen = { x: player.x, y: player.y };
+            const point = (rules.backup === false ? g.lastSeen : alarm.point)
+                ?? g.lastSeen ?? { x: player.x, y: player.y };
             const dist = Math.hypot(player.x - g.x, player.y - g.y);
             const shootable = sees && dist < GUARD.shootRange;
 
@@ -284,7 +292,7 @@ export function updateGuard(g, ctx, dt) {
                     steer(g, g.x - player.x, g.y - player.y, GUARD.patrolSpeed, dt);
                 } else brake(g, dt);
 
-                if (g.shootCd <= 0) {
+                if (g.shootCd <= 0 && rules.shoot !== false) {
                     g.aim += dt;
                     if (g.aim >= GUARD.aimTime) {
                         ctx.shoot(g, wantAngle);
@@ -295,6 +303,11 @@ export function updateGuard(g, ctx, dt) {
             } else {
                 g.aim = Math.max(0, g.aim - dt * 2);
                 goTo(g, ctx, point.x, point.y, GUARD.chaseSpeed * mulSpeed, dt);
+            }
+            // Без подмоги погоня заканчивается сама: потерял — вернулся.
+            if (rules.backup === false) {
+                g.memoryLeft = sees ? memory : (g.memoryLeft ?? memory) - dt;
+                if (g.memoryLeft <= 0) { g.state = 'patrol'; bark(g, 'Показалось.'); }
             }
             break;
         }
@@ -323,7 +336,7 @@ export function updateGuard(g, ctx, dt) {
     if (moving && g.state !== 'chase') wantAngle = Math.atan2(g.vy, g.vx);
     else if (moving && g.state === 'chase' && !sees) wantAngle = Math.atan2(g.vy, g.vx);
 
-    g.angle = turnToward(g.angle, normalizeAngle(wantAngle), GUARD.turnRate, dt);
+    g.angle = turnToward(g.angle, normalizeAngle(wantAngle), GUARD.turnRate * (rules.turn ?? 1), dt);
     brake(g, dt * 0.35);
     moveCircle(level, g, g.vx * dt, g.vy * dt);
 }

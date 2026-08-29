@@ -7,7 +7,7 @@
  * не кнопкой «отвлечь».
  */
 
-import { NOISE, PLAYER, COIN, PISTOL, GUARD, TILE, BOX, LIGHT, TRACKS, FOOTFALL } from './tuning.js';
+import { NOISE, PLAYER, COIN, PISTOL, GUARD, TILE, BOX, LIGHT, TRACKS, FOOTFALL, RULES } from './tuning.js';
 import { buildLevel, makeFlowCache, hidesAt, isExit, crateNear, solidAt, surfaceAt, tileAt, SOFT } from './level.js';
 import { createLight, updateLights, illumination, breakLight, douseLight, lightOn } from './light.js';
 import { createGuard, updateGuard, hearNoise, noticeBody, knockOut, isBehind, isOut } from './guard.js';
@@ -17,8 +17,11 @@ import { canSee } from './vision.js';
 
 export function createWorld(def) {
     const level = buildLevel(def);
+    const rules = { ...RULES, ...(def.rules ?? {}) };
     const w = {
         level,
+        /** Что на этом уровне вообще включено. Порядок обучения живёт здесь. */
+        rules,
         lights: level.lights.map(createLight),
         player: createPlayer(level.spawn),
         guards: level.guards.map(createGuard),
@@ -29,12 +32,12 @@ export function createWorld(def) {
         noises: [],
         bullets: [],
         coins: [],
-        coinsLeft: COIN.count,
+        coinsLeft: rules.coins ?? COIN.count,
         /** Рубильники: погасить сектор без выстрела. */
         switches: level.switches.map((sw) => ({ ...sw, out: 0 })),
         /** Коробка одна на уровень и никуда не девается. */
         box: false,
-        ammo: PISTOL.ammo,
+        ammo: rules.ammo ?? PISTOL.ammo,
         fireCd: 0,
         bodyCheck: 0,
         /** Следы на мягкой земле: цепочка, по которой можно пойти. */
@@ -66,7 +69,8 @@ export function say(w, text, seconds = 2.2) {
  * дешевле терпения. С ним шум стоит ровно то, что должен, — время. Ждать
  * придётся в укрытии, пока объект не успокоится до «настороже».
  */
-export const gateOpen = (w) => w.alarm.state === CALM || w.alarm.state === CAUTION;
+export const gateOpen = (w) => !w.rules.lockGate
+    || w.alarm.state === CALM || w.alarm.state === CAUTION;
 
 /**
  * Шум в точке. Стены его не держат — в этом всё отличие от зрения: за
@@ -99,7 +103,7 @@ function stepFeet(w, dt) {
     w.footT = FOOTFALL[p.mode] ?? FOOTFALL.walk;
     w.events.push({ kind: 'foot', mode: p.mode, surface: surfaceAt(w.level, p.x, p.y) });
 
-    if (tileAt(w.level, p.x, p.y) !== SOFT) return;
+    if (!w.rules.tracks || tileAt(w.level, p.x, p.y) !== SOFT) return;
     w.trackT -= 1;
     if (w.trackT > 0) return;
     w.trackT = 2;
@@ -176,7 +180,7 @@ export function flipSwitch(w) {
 
 /** Коробка: стоишь — ты ящик, двинулся — ты человек с ящиком. */
 export function toggleBox(w) {
-    if (w.player.dead || w.player.dragging) return false;
+    if (w.player.dead || w.player.dragging || !w.rules.box) return false;
     w.box = !w.box;
     say(w, w.box ? 'Под коробкой. Стой — и ты просто ящик.' : 'Вылез.', 2);
     return true;
@@ -389,6 +393,7 @@ function checkTracks(w, dt) {
  * ТРЕВОГУ: знать, что чужой на объекте, и знать, где он, — разные вещи.
  */
 function checkBodies(w, dt) {
+    if (!w.rules.bodies) return;
     w.bodyCheck -= dt;
     if (w.bodyCheck > 0) return;
     w.bodyCheck = 0.2;
@@ -464,6 +469,7 @@ export function updateWorld(w, input, dt) {
     const ctx = {
         level: w.level,
         alarm: w.alarm,
+        rules: w.rules,
         player: p,
         flow: w.flow,
         noise: (x, y, r, kind) => emitNoise(w, x, y, r, kind),

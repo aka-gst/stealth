@@ -7,7 +7,7 @@
  */
 
 import { STEP, VIEW, fitView } from './tuning.js';
-import { YARD } from './levels.js';
+import { LEVELS } from './levels.js';
 import { createWorld, updateWorld, useAction, tryTakedown, toggleBox, throwCoin, firePistol, say } from './world.js';
 import { createRenderer, draw } from './render.js';
 import { createInput } from './input.js';
@@ -18,13 +18,61 @@ const renderer = createRenderer(canvas);
 const input = createInput(canvas);
 const audio = createAudio();
 
+/*
+ * Щипок на тачпаде браузер понимает как «увеличить страницу», и игра
+ * уезжает из кадра. Для игры это всегда промах пальцем, а не намерение,
+ * поэтому масштабирование страницы запрещаем целиком.
+ */
+window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+for (const evt of ['gesturestart', 'gesturechange', 'gestureend']) {
+    window.addEventListener(evt, (e) => e.preventDefault());
+}
+window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && ['Equal', 'Minus', 'Digit0'].includes(e.code)) e.preventDefault();
+});
+
 // Браузер не даёт звучать до первого касания — заводим на первом же.
 for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
     window.addEventListener(evt, () => audio.ensure(), { once: true });
 }
 
-let world = createWorld(YARD);
-say(world, YARD.brief, 5);
+/*
+ * Уровни идут порядком, и порядок — половина игры. Пройденное запоминается,
+ * чтобы не проходить обучение заново каждый раз; сбросить можно клавишей
+ * «0», перепрыгнуть — «N».
+ */
+const SAVE = 'perimetr.level';
+
+function loadIndex() {
+    try {
+        const v = Number(localStorage.getItem(SAVE));
+        return Number.isInteger(v) && v >= 0 && v < LEVELS.length ? v : 0;
+    } catch { return 0; }
+}
+
+function saveIndex(i) {
+    try { localStorage.setItem(SAVE, String(i)); } catch { /* приватный режим — не беда */ }
+}
+
+let index = loadIndex();
+let world = start(index);
+
+function start(i) {
+    index = Math.max(0, Math.min(LEVELS.length - 1, i));
+    saveIndex(index);
+    const level = LEVELS[index];
+    const w = createWorld(level);
+    // Подсказка по клавишам своя у каждого уровня: перечислять всё сразу
+    // значит показать игроку список того, чего он ещё не умеет.
+    const keys = document.getElementById('keys');
+    if (keys && level.keys) keys.innerHTML = level.keys;
+    w.levelName = level.name;
+    w.levelNo = index + 1;
+    w.levelTotal = LEVELS.length;
+    w.last = index === LEVELS.length - 1;
+    say(w, level.brief, 6);
+    return w;
+}
 
 /*
  * Отладочный пульт: ?debug даёт прогнать симуляцию из консоли и нарисовать
@@ -40,13 +88,14 @@ if (location.search.includes('debug')) {
             for (let t = 0; t < seconds; t += STEP) updateWorld(world, frame, STEP);
             return world;
         },
+        level: (i) => { world = start(i); return world; },
         act: (lethal = false) => tryTakedown(world, lethal),
         use: () => useAction(world),
         box: () => toggleBox(world),
         coin: () => throwCoin(world),
         fire: () => firePistol(world),
         render: () => draw(renderer, world),
-        reset() { world = createWorld(YARD); return world; },
+        reset() { world = start(index); return world; },
     };
 }
 
@@ -84,9 +133,17 @@ function loop(now) {
     };
     const frame = input.frame(dt, cam, VIEW);
 
-    if (frame.restart) {
-        world = createWorld(YARD);
-        say(world, YARD.brief, 4);
+    if (frame.restart) world = start(index);
+    if (frame.next) world = start(index + 1);
+    if (frame.prev) world = start(index - 1);
+    if (frame.reset) world = start(0);
+
+    // Уровень сдан — дальше по кнопке, а не сам собой: итог надо прочитать.
+    if (world.done === 'win' && world.doneT > 0.6 && (frame.action || frame.fire)) {
+        world = start(world.last ? index : index + 1);
+    }
+    if (world.done === 'lose' && world.doneT > 0.6 && (frame.action || frame.fire)) {
+        world = start(index);
     }
 
     if (!world.done) {

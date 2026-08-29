@@ -155,6 +155,9 @@ export function createInput(canvas) {
                 peek: keys.has('KeyV') || peekHeld,
                 mute: edges.has('KeyM'),
                 restart: edges.has('KeyR'),
+                next: edges.has('KeyN'),
+                prev: edges.has('KeyP'),
+                reset: edges.has('Digit0'),
                 creepOn: creep,
             };
         },

@@ -14,12 +14,12 @@
  * игрока. Запуск: node tools/check-level.mjs
  */
 
-import { YARD } from '../src/levels.js';
-import { createWorld, updateWorld, firePistol, gateOpen } from '../src/world.js';
-import { flowField, flowStep, tileAt, WALL, CRATE, GRASS } from '../src/level.js';
+import { LEVELS } from '../src/levels.js';
+import { createWorld, updateWorld, firePistol, throwCoin, tryTakedown, gateOpen } from '../src/world.js';
+import { flowField, flowStep, tileAt, WALL, CRATE, GRASS, EXIT } from '../src/level.js';
 import { illumination } from '../src/light.js';
 import { canSee, sightReach } from '../src/vision.js';
-import { isOut } from '../src/guard.js';
+import { isOut, isBehind } from '../src/guard.js';
 import { TILE, GUARD } from '../src/tuning.js';
 
 const STEP = 1 / 120;
@@ -101,14 +101,18 @@ function target(w) {
     return w.level.exit;
 }
 
-function run({ kind, limit = 300 }) {
-    const w = createWorld(YARD);
+function run({ level, kind, limit = 300 }) {
+    const w = createWorld(level);
     let t = 0;
     let spottedAt = null;
     let field = null;
     let refresh = 0;
     let hiding = false;
     let patience = 0;
+    let stuck = 0;
+    let push = 0;
+    let lastX = null;
+    let lastY = null;
 
     while (t < limit && !w.done) {
         const aim = target(w);
@@ -126,6 +130,26 @@ function run({ kind, limit = 300 }) {
         const step = kind === 'в тени' || hiding
             ? gradient(w.level, field, w.player.x, w.player.y)
             : flowStep(w.level, field, w.player.x, w.player.y);
+
+        // Бот умеет ровно два действия помимо ходьбы: снять со спины и
+        // бросить монету, когда встал намертво. Этого хватает, чтобы
+        // проверить уровни, где без них не пройти.
+        if (kind === 'в тени') {
+            for (const g of w.guards) {
+                if (isOut(g)) continue;
+                if (Math.hypot(g.x - w.player.x, g.y - w.player.y) > 24) continue;
+                if (!isBehind(g, w.player.x, w.player.y)) continue;
+                tryTakedown(w, false);
+                break;
+            }
+            const moved = Math.hypot(w.player.x - (lastX ?? 0), w.player.y - (lastY ?? 0));
+            if (moved > 24) { lastX = w.player.x; lastY = w.player.y; stuck = 0; } else stuck += STEP;
+            if (stuck > 3 && w.coinsLeft > 0) {
+                w.player.angle = Math.atan2(aim.y - w.player.y, aim.x - w.player.x) + Math.PI / 2;
+                throwCoin(w);
+                stuck = 0;
+            }
+        }
 
         if (kind === 'громко') {
             for (const g of w.guards) {
@@ -146,7 +170,15 @@ function run({ kind, limit = 300 }) {
             ahead.lit = illumination(w.level, w.lights, ahead.x, ahead.y);
             ahead.grass = tileAt(w.level, ahead.x, ahead.y) === GRASS;
             const risky = w.guards.some((g) => !isOut(g) && canSee(w.level, g, ahead));
-            if (risky && patience < 8) { wait = true; patience += STEP; } else patience = 0;
+            // Терпение не бесконечно: выждав своё, бот идёт напролом целую
+            // пару секунд, а не один кадр. Иначе он топчется на месте до
+            // конца отсчёта и врёт, что уровень непроходим.
+            push -= STEP;
+            if (risky && push <= 0) {
+                patience += STEP;
+                wait = true;
+                if (patience > 6) { patience = 0; push = 1.6; wait = false; }
+            } else if (!risky) patience = 0;
         }
         updateWorld(w, {
             ax: wait ? 0 : (step?.x ?? 0),
@@ -171,23 +203,40 @@ function run({ kind, limit = 300 }) {
     return { kind, done: w.done ?? 'таймаут', t, spottedAt, w };
 }
 
-const results = ['напролом', 'в тени', 'громко'].map((kind) => run({ kind }));
+let bad = 0;
 
-console.log(`Уровень «${YARD.name}»\n`);
-for (const r of results) {
-    const s = r.w.stats;
-    console.log(
-        `${r.kind.padEnd(10)} ${r.done.padEnd(8)} ${r.t.toFixed(1).padStart(6)} с  ` +
-        `кейс ${r.w.goal.taken ? 'да ' : 'нет'}  ` +
-        `замечен ${r.spottedAt === null ? 'ни разу' : r.spottedAt.toFixed(1) + ' с'}  ` +
-        `убито ${s.killed}  hp ${r.w.player.hp}`,
-    );
+for (const level of LEVELS) {
+    // Самая частая ошибка расстановки: выход задан числом, но на карту его
+    // поставить забыли. Проверяем до всякой симуляции.
+    const probe = createWorld(level);
+    if (tileAt(probe.level, probe.level.exit.x, probe.level.exit.y) !== EXIT) {
+        console.log(`\n${level.name}\n  ← выход не отмечен на карте символом X`);
+        bad += 1;
+        continue;
+    }
+
+    const kinds = ['напролом', 'в тени'];
+    if ((level.rules?.ammo ?? 6) > 0) kinds.push('громко');
+    const results = kinds.map((kind) => run({ level, kind }));
+
+    console.log(`\n${level.name}`);
+    for (const r of results) {
+        const s = r.w.stats;
+        console.log(
+            `  ${r.kind.padEnd(10)} ${r.done.padEnd(8)} ${r.t.toFixed(1).padStart(6)} с  ` +
+            `замечен ${r.spottedAt === null ? 'ни разу' : r.spottedAt.toFixed(1) + ' с'}  ` +
+            `убито ${s.killed}  hp ${r.w.player.hp}`,
+        );
+    }
+
+    const shadow = results.find((r) => r.kind === 'в тени');
+    if (shadow.done !== 'win') {
+        console.log('  ← тихого маршрута нет: бот в тени не дошёл');
+        bad += 1;
+    } else if (shadow.spottedAt !== null) {
+        console.log('  ← тихий маршрут есть, но бота по дороге заметили');
+    }
 }
 
-const shadow = results.find((r) => r.kind === 'в тени');
-if (shadow.done !== 'win' || shadow.spottedAt !== null) {
-    console.log('\nТихого маршрута нет: бот в тени не дошёл или был замечен.');
-    process.exitCode = 1;
-} else {
-    console.log('\nТихий маршрут существует.');
-}
+console.log(bad ? `\nНепроходимых тихо уровней: ${bad}` : '\nВсе уровни проходятся тихо.');
+process.exitCode = bad ? 1 : 0;
