@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "perimetr",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "tools/serve.mjs"
+      ],
+      "port": 4192,
+      "autoPort": true
+    }
+  ]
+}

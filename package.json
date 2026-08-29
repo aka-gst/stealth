@@ -1,0 +1,12 @@
+{
+  "name": "perimetr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ПЕРИМЕТР — браузерный стелс сверху вниз: конус зрения, слух и тьма как три разных укрытия",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node tools/check-level.mjs"
+  }
+}
