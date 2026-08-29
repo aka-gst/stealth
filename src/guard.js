@@ -14,7 +14,7 @@
  *   «убить громко» не имеет цены, а тихий проход не имеет смысла.
  */
 
-import { GUARD, NOISE, PLAYER } from './tuning.js';
+import { GUARD, NOISE, PLAYER, BOX } from './tuning.js';
 import { moveCircle, flowStep } from './level.js';
 import { canSee, turnToward, normalizeAngle } from './vision.js';
 import { ALERT, SEARCH, CALM, spotted, disturb, sightMul, speedMul } from './alarm.js';
@@ -193,7 +193,9 @@ export function updateGuard(g, ctx, dt) {
     const mulSpeed = speedMul(alarm);
 
     // Зрение считается раньше состояний: увидеть можно в любом из них.
-    const sees = !player.dead && canSee(level, g, player, mulSight);
+    // Коробка не спасает того, на кого наткнулись вплотную.
+    const boxed = player.hidden && Math.hypot(player.x - g.x, player.y - g.y) > BOX.bump;
+    const sees = !player.dead && !boxed && canSee(level, g, player, mulSight);
     if (sees) {
         g.notice += dt;
         if (g.notice >= GUARD.notice) {

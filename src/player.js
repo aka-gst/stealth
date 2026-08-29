@@ -7,8 +7,8 @@
  * половиной скорости.
  */
 
-import { PLAYER, NOISE } from './tuning.js';
-import { moveCircle } from './level.js';
+import { PLAYER, NOISE, BOX } from './tuning.js';
+import { moveCircle, surfaceAt } from './level.js';
 
 export function createPlayer(spawn) {
     return {
@@ -29,17 +29,20 @@ export function createPlayer(spawn) {
         noiseT: 0,
         mode: 'walk',
         speed: 0,
+        /** В коробке и стоя — тебя не видят вовсе. Считает мир. */
+        hidden: false,
     };
 }
 
 export function playerSpeed(p, input) {
+    if (input.box) return BOX.speed;
     if (input.creep) return PLAYER.creepSpeed;
     if (input.run && !p.dragging) return PLAYER.runSpeed;
     return PLAYER.walkSpeed;
 }
 
 export function noiseOf(p, input) {
-    if (input.creep) return NOISE.creep;
+    if (input.creep || input.box) return NOISE.creep;
     if (input.run && !p.dragging) return NOISE.run;
     return NOISE.walk;
 }
@@ -55,7 +58,7 @@ export function updatePlayer(p, level, input, dt) {
 
     let speed = playerSpeed(p, input);
     if (p.dragging) speed *= PLAYER.dragSpeed;
-    p.mode = input.creep ? 'creep' : (input.run && !p.dragging ? 'run' : 'walk');
+    p.mode = input.box ? 'box' : (input.creep ? 'creep' : (input.run && !p.dragging ? 'run' : 'walk'));
 
     const len = Math.hypot(input.ax, input.ay);
     if (len > 0.01) {
@@ -84,7 +87,11 @@ export function updatePlayer(p, level, input, dt) {
 
     // Шум отмечается не каждый кадр, а раз в интервал: иначе мир звенит
     // кольцами на каждом шаге и перестаёт читаться.
-    const radius = noiseOf(p, input);
+    //
+    // Поверхность множит шаг и бег, но не крадущийся шаг: тот ноль на
+    // любой земле. Поэтому по гравию ходить нельзя — по нему можно только
+    // красться, и это осознанный выбор игрока, а не подстава.
+    const radius = noiseOf(p, input) * surfaceAt(level, p.x, p.y);
     if (p.speed < 20 || radius <= 0) {
         p.noiseT = 0;
         return 0;

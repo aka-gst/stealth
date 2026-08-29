@@ -13,7 +13,7 @@
  */
 
 import { TILE, VIEW, GUARD, LIGHT, PLAYER } from './tuning.js';
-import { WALL, CRATE, GRASS, EXIT, tileAt } from './level.js';
+import { WALL, CRATE, GRASS, EXIT, GRAVEL, SOFT, tileAt } from './level.js';
 import { coneShape, sightReach } from './vision.js';
 import { lightShape, lightOn } from './light.js';
 import { moodOf, isOut } from './guard.js';
@@ -29,6 +29,9 @@ const COL = {
     crateTop: '#8a6f45',
     grass: '#22331f',
     grassTip: '#3d5a35',
+    gravel: '#3a3733',
+    gravelDot: '#6b6459',
+    soft: '#2e2823',
     exit: '#3ba55d',
     player: '#d8e4f0',
     guard: '#c8ccd4',
@@ -95,6 +98,7 @@ export function draw(r, world) {
     drawCones(ctx, world);
     drawNoises(ctx, world);
     drawLastKnown(ctx, world);
+    drawSwitches(ctx, world);
     drawGoal(ctx, world);
     drawCoins(ctx, world);
     drawGuards(ctx, world);
@@ -104,6 +108,7 @@ export function draw(r, world) {
     ctx.restore();
 
     drawObjective(r, world);
+    drawRadar(r, world);
     drawHud(r, world);
     if (world.done) drawEnd(r, world);
 }
@@ -130,7 +135,21 @@ function drawFloor(ctx, world, cam) {
             ctx.fillStyle = (tx + ty) % 2 === 0 ? COL.floor : COL.floorAlt;
             ctx.fillRect(x, y, TILE, TILE);
 
-            if (t === GRASS) {
+            if (t === GRAVEL) {
+                // Гравий видно по крупной крошке: игрок должен понимать,
+                // что шагом сюда нельзя, ещё до того как шагнул.
+                ctx.fillStyle = COL.gravel;
+                ctx.fillRect(x, y, TILE, TILE);
+                ctx.fillStyle = COL.gravelDot;
+                for (let i = 0; i < 7; i += 1) {
+                    const gx = x + ((tx * 13 + ty * 7 + i * 5) % (TILE - 3)) + 1;
+                    const gy = y + ((tx * 5 + ty * 17 + i * 11) % (TILE - 3)) + 1;
+                    ctx.fillRect(gx, gy, 2, 2);
+                }
+            } else if (t === SOFT) {
+                ctx.fillStyle = COL.soft;
+                ctx.fillRect(x, y, TILE, TILE);
+            } else if (t === GRASS) {
                 ctx.fillStyle = COL.grass;
                 ctx.fillRect(x, y, TILE, TILE);
                 ctx.strokeStyle = COL.grassTip;
@@ -364,6 +383,19 @@ function drawLastKnown(ctx, world) {
     ctx.restore();
 }
 
+/** Щиток на стене: единственный тихий способ сделать темноту. */
+function drawSwitches(ctx, world) {
+    for (const sw of world.switches) {
+        ctx.fillStyle = '#2f3742';
+        ctx.fillRect(sw.x - 5, sw.y - 6, 10, 12);
+        ctx.strokeStyle = '#59657a';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sw.x - 5.5, sw.y - 6.5, 11, 13);
+        ctx.fillStyle = sw.out > 0 ? '#7a3b3b' : '#5fc27e';
+        ctx.fillRect(sw.x - 2, sw.y - 3, 4, 4);
+    }
+}
+
 /** Кейс на полу и стрелка к текущей задаче: куда идти, игрок гадать не должен. */
 function drawGoal(ctx, world) {
     const g = world.goal;
@@ -470,6 +502,26 @@ function drawPlayer(ctx, world) {
         ctx.fill();
         return;
     }
+    if (world.box) {
+        // Под коробкой героя не видно ни стражам, ни игроку — видно ящик.
+        ctx.fillStyle = p.hidden ? COL.crateTop : COL.crate;
+        ctx.fillRect(p.x - 9, p.y - 8, 18, 16);
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p.x - 8.5, p.y - 7.5, 17, 15);
+        ctx.beginPath();
+        ctx.moveTo(p.x - 9, p.y);
+        ctx.lineTo(p.x + 9, p.y);
+        ctx.stroke();
+        if (p.hidden) {
+            ctx.strokeStyle = 'rgba(120,200,140,0.5)';
+            ctx.setLineDash([3, 3]);
+            ctx.strokeRect(p.x - 11.5, p.y - 10.5, 23, 21);
+            ctx.setLineDash([]);
+        }
+        return;
+    }
+
     // Герой в тени тускнеет, но не пропадает: ощущение даёт фигура, число
     // даёт прибор в углу экрана.
     const alpha = 0.55 + 0.45 * p.lit;
@@ -513,6 +565,79 @@ function drawMarks(ctx, world) {
             ctx.fillText(g.say, g.x, g.y - 28);
         }
     }
+}
+
+/**
+ * Радар. Цитата из MGS, и главное в ней не карта, а то, что она глохнет
+ * ровно тогда, когда становится нужнее всего: при тревоге игрок остаётся
+ * с тем, что видит своими глазами.
+ */
+function drawRadar(r, world) {
+    const { ctx, cam } = r;
+    reset(r);
+    const w = 112;
+    const scale = w / world.level.pixelW;
+    const h = world.level.pixelH * scale;
+    const x0 = VIEW.w - w - 10;
+    const y0 = VIEW.h - h - 10;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,12,20,0.72)';
+    ctx.fillRect(x0, y0, w, h);
+    ctx.strokeStyle = 'rgba(110,140,180,0.35)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
+
+    const dead = world.alarm.state === ALERT || world.alarm.state === SEARCH;
+    if (dead) {
+        ctx.fillStyle = 'rgba(200,90,90,0.20)';
+        for (let i = 0; i < 26; i += 1) {
+            const sy = y0 + ((i * 37) % (h - 2)) + 1;
+            ctx.fillRect(x0 + 1, sy, w - 2, 1);
+        }
+        ctx.font = 'bold 9px system-ui, sans-serif';
+        ctx.fillStyle = '#ff8080';
+        ctx.textAlign = 'center';
+        ctx.fillText('ПОМЕХИ', x0 + w / 2, y0 + h / 2 + 3);
+        ctx.restore();
+        return;
+    }
+
+    const { level } = world;
+    for (let ty = 0; ty < level.h; ty += 1) {
+        for (let tx = 0; tx < level.w; tx += 1) {
+            const t = level.tiles[ty * level.w + tx];
+            if (t !== WALL && t !== CRATE) continue;
+            ctx.fillStyle = t === CRATE ? 'rgba(150,120,70,0.45)' : 'rgba(120,150,190,0.32)';
+            ctx.fillRect(x0 + tx * TILE * scale, y0 + ty * TILE * scale, TILE * scale + 0.6, TILE * scale + 0.6);
+        }
+    }
+
+    const mark = (px, py, colour, size = 2) => {
+        ctx.fillStyle = colour;
+        ctx.fillRect(x0 + px * scale - size / 2, y0 + py * scale - size / 2, size, size);
+    };
+
+    // Конусы на радаре — это и есть его смысл: планировать можно только
+    // тогда, когда видно, кто куда смотрит.
+    for (const g of world.guards) {
+        if (isOut(g)) continue;
+        const gx = x0 + g.x * scale;
+        const gy = y0 + g.y * scale;
+        const far = GUARD.sight * scale;
+        ctx.fillStyle = moodOf(g) === 'alert' ? 'rgba(255,90,90,0.35)' : 'rgba(255,210,120,0.22)';
+        ctx.beginPath();
+        ctx.moveTo(gx, gy);
+        ctx.arc(gx, gy, far, g.angle - GUARD.half, g.angle + GUARD.half);
+        ctx.closePath();
+        ctx.fill();
+        mark(g.x, g.y, '#ffd27a', 3);
+    }
+
+    if (world.goal && !world.goal.taken) mark(world.goal.x, world.goal.y, '#d9c169', 4);
+    mark(world.level.exit.x, world.level.exit.y, gateOpen(world) ? '#6ee08c' : '#c94f4f', 4);
+    mark(world.player.x, world.player.y, '#e8f0ff', 3);
+    ctx.restore();
 }
 
 function drawHud(r, world) {
@@ -567,7 +692,7 @@ function drawHud(r, world) {
     ctx.fillText(hp, 10, VIEW.h - 12);
     ctx.fillText(`монет ${world.coinsLeft}`, 60, VIEW.h - 12);
     ctx.fillText(`патронов ${world.ammo}`, 130, VIEW.h - 12);
-    const mode = { creep: 'крадусь', walk: 'иду', run: 'бегу' }[world.player.mode];
+    const mode = { creep: 'крадусь', walk: 'иду', run: 'бегу', box: 'коробка' }[world.player.mode];
     ctx.fillText(mode, 215, VIEW.h - 12);
     if (world.player.dragging) ctx.fillText('несу тело', 260, VIEW.h - 12);
     if (world.goal?.taken) {

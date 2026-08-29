@@ -10,7 +10,7 @@
  * проходимым клеткам, а не сквозь них.
  */
 
-import { TILE } from './tuning.js';
+import { TILE, SURFACE } from './tuning.js';
 
 export const FLOOR = 0;
 export const WALL = 1;
@@ -19,6 +19,10 @@ export const CRATE = 2;
 /** Высокая трава: пройти можно, а заметить в ней — только вплотную. */
 export const GRASS = 3;
 export const EXIT = 4;
+/** Гравий: шаг по нему слышно почти как бег. */
+export const GRAVEL = 5;
+/** Земля, ковёр: по ним ходят нормальным шагом почти беззвучно. */
+export const SOFT = 6;
 
 const LEGEND = {
     '#': WALL,
@@ -27,6 +31,8 @@ const LEGEND = {
     '=': CRATE,
     ',': GRASS,
     'X': EXIT,
+    ':': GRAVEL,
+    '-': SOFT,
 };
 
 /** Собрать уровень из картинки. Строки разной длины дополняются полом. */
@@ -61,6 +67,7 @@ export function buildLevel(def) {
             route: (g.route ?? []).map((p) => ({ ...toPixels(p), wait: p.wait ?? 0, look: p.look ?? false })),
         })),
         coins: (def.coins ?? []).map(toPixels),
+        switches: (def.switches ?? []).map((sw) => ({ ...toPixels(sw), r: sw.r ?? 150 })),
         lights: (def.lights ?? []).map((l) => ({ ...l, ...toPixels(l) })),
         ambient: def.ambient,
         brief: def.brief ?? '',
@@ -83,6 +90,16 @@ export function tileAt(level, px, py) {
 export function solidAt(level, px, py) {
     const t = tileAt(level, px, py);
     return t === WALL || t === CRATE;
+}
+
+/** Во сколько раз громче шаг по этой клетке. */
+export function surfaceAt(level, px, py) {
+    switch (tileAt(level, px, py)) {
+        case GRAVEL: return SURFACE.gravel;
+        case SOFT: return SURFACE.soft;
+        case GRASS: return SURFACE.grass;
+        default: return SURFACE.concrete;
+    }
 }
 
 export function hidesAt(level, px, py) {

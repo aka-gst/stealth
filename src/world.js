@@ -7,9 +7,9 @@
  * не кнопкой «отвлечь».
  */
 
-import { NOISE, PLAYER, COIN, PISTOL, GUARD, TILE } from './tuning.js';
+import { NOISE, PLAYER, COIN, PISTOL, GUARD, TILE, BOX, LIGHT } from './tuning.js';
 import { buildLevel, makeFlowCache, hidesAt, isExit, crateNear, solidAt } from './level.js';
-import { createLight, updateLights, illumination, breakLight, lightOn } from './light.js';
+import { createLight, updateLights, illumination, breakLight, douseLight, lightOn } from './light.js';
 import { createGuard, updateGuard, hearNoise, noticeBody, knockOut, isBehind, isOut } from './guard.js';
 import { createPlayer, updatePlayer, hurtPlayer } from './player.js';
 import { createAlarm, updateAlarm, disturb, sightMul, CALM, CAUTION, ALERT, SEARCH } from './alarm.js';
@@ -30,6 +30,10 @@ export function createWorld(def) {
         bullets: [],
         coins: [],
         coinsLeft: COIN.count,
+        /** Рубильники: погасить сектор без выстрела. */
+        switches: level.switches.map((sw) => ({ ...sw, out: 0 })),
+        /** Коробка одна на уровень и никуда не девается. */
+        box: false,
         ammo: PISTOL.ammo,
         fireCd: 0,
         bodyCheck: 0,
@@ -93,6 +97,65 @@ export function tryTakedown(w, lethal) {
     emitNoise(w, best.x, best.y, lethal ? NOISE.knife : NOISE.choke, 'takedown');
     say(w, lethal ? 'Насмерть. Тело найдут — спрячь.' : 'Оглушён. Очнётся через минуту, если не спрятать.');
     return true;
+}
+
+/**
+ * Стук костяшками по стене. Самый дешёвый шум в игре: приманить одного к
+ * углу и снять его оттуда, где он тебя не увидит.
+ */
+export function knock(w) {
+    const p = w.player;
+    const x = p.x + Math.cos(p.angle) * 18;
+    const y = p.y + Math.sin(p.angle) * 18;
+    if (!solidAt(w.level, x, y)) return false;
+    emitNoise(w, x, y, NOISE.knock, 'knock');
+    say(w, 'Тук-тук.', 1.2);
+    return true;
+}
+
+/**
+ * Рубильник. Тьму можно делать не только пулей — и это единственный тихий
+ * способ погасить свет там, где он мешает.
+ */
+export function flipSwitch(w) {
+    const p = w.player;
+    const sw = w.switches.find((s) => Math.hypot(s.x - p.x, s.y - p.y) < 24);
+    if (!sw) return false;
+    let hit = 0;
+    for (const l of w.lights) {
+        if (l.broken) continue;
+        if (Math.hypot(l.x - sw.x, l.y - sw.y) > sw.r) continue;
+        douseLight(l);
+        hit += 1;
+    }
+    sw.out = LIGHT.relight;
+    emitNoise(w, p.x, p.y, NOISE.switchClack, 'switch');
+    say(w, hit ? `Свет погас на ${LIGHT.relight} секунд.` : 'Щёлк. Здесь и так темно.', 2);
+    return true;
+}
+
+/** Коробка: стоишь — ты ящик, двинулся — ты человек с ящиком. */
+export function toggleBox(w) {
+    if (w.player.dead || w.player.dragging) return false;
+    w.box = !w.box;
+    say(w, w.box ? 'Под коробкой. Стой — и ты просто ящик.' : 'Вылез.', 2);
+    return true;
+}
+
+/**
+ * Одна кнопка на всё близкое. Порядок неслучаен: сначала то, что игрок
+ * держит в руках, потом то, до чего дотянулся, и только потом стук —
+ * иначе стук съедал бы все остальные действия у стены.
+ */
+export function useAction(w) {
+    if (w.player.dead) return false;
+    if (w.player.dragging) return toggleCarry(w);
+    if (tryTakedown(w, false)) return true;
+    if (toggleCarry(w)) return true;
+    if (flipSwitch(w)) return true;
+    if (knock(w)) return true;
+    say(w, 'Тут не за что взяться. Заходи со спины или стучи в стену.', 1.8);
+    return false;
 }
 
 /** Взять тело на плечо или бросить его. */
@@ -292,11 +355,16 @@ export function updateWorld(w, input, dt) {
 
     updateLights(w.lights, dt);
 
+    for (const sw of w.switches) sw.out = Math.max(0, sw.out - dt);
+
     const p = w.player;
     p.lit = litAt(w, p.x, p.y);
     p.grass = hidesAt(w.level, p.x, p.y);
 
-    const noise = updatePlayer(p, w.level, input, dt);
+    const noise = updatePlayer(p, w.level, { ...input, box: w.box }, dt);
+    // Коробка прячет только неподвижного и только пока никто не гонится:
+    // если тебя уже увидели, все знают, кто там под ящиком.
+    p.hidden = w.box && p.speed < 8 && !w.guards.some((g) => g.state === 'chase');
     if (noise > 0) emitNoise(w, p.x, p.y, noise, 'step');
 
     // Тело едет за игроком, но не сквозь стены.

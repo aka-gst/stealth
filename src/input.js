@@ -77,7 +77,7 @@ export function createInput(canvas) {
         pad.addEventListener('touchcancel', end);
     }
 
-    for (const [id, code] of [['b-act', 'KeyE'], ['b-kill', 'KeyF'], ['b-coin', 'Coin'], ['b-fire', 'Fire']]) {
+    for (const [id, code] of [['b-act', 'KeyE'], ['b-kill', 'KeyF'], ['b-coin', 'Coin'], ['b-fire', 'Fire'], ['b-box', 'KeyB']]) {
         const el = document.getElementById(id);
         if (!el) continue;
         el.addEventListener('touchstart', (e) => { press(code); taps.add(code); e.preventDefault(); }, { passive: false });
@@ -129,6 +129,7 @@ export function createInput(canvas) {
                 kill: edges.has('KeyF'),
                 coin: edges.has('KeyQ') || edges.has('Coin'),
                 fire: edges.has('Space') || edges.has('Fire'),
+                box: edges.has('KeyB'),
                 restart: edges.has('KeyR'),
                 creepOn: creep,
             };

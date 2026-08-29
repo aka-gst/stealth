@@ -8,7 +8,7 @@
 
 import { STEP, VIEW, fitView } from './tuning.js';
 import { YARD } from './levels.js';
-import { createWorld, updateWorld, tryTakedown, toggleCarry, throwCoin, firePistol, say } from './world.js';
+import { createWorld, updateWorld, useAction, tryTakedown, toggleBox, throwCoin, firePistol, say } from './world.js';
 import { createRenderer, draw } from './render.js';
 import { createInput } from './input.js';
 
@@ -34,7 +34,8 @@ if (location.search.includes('debug')) {
             return world;
         },
         act: (lethal = false) => tryTakedown(world, lethal),
-        carry: () => toggleCarry(world),
+        use: () => useAction(world),
+        box: () => toggleBox(world),
         coin: () => throwCoin(world),
         fire: () => firePistol(world),
         render: () => draw(renderer, world),
@@ -76,11 +77,9 @@ function loop(now) {
     }
 
     if (!world.done) {
-        if (frame.action) {
-            // Одна кнопка на всё близкое: сначала тело, потом снятие.
-            if (!toggleCarry(world) && !tryTakedown(world, false)) say(world, 'Тут никого нет — заходи со спины.', 1.6);
-        }
+        if (frame.action) useAction(world);
         if (frame.kill) tryTakedown(world, true);
+        if (frame.box) toggleBox(world);
         if (frame.coin && !throwCoin(world)) say(world, 'Монеты кончились. Подбери брошенные.', 1.6);
         if (frame.fire && !firePistol(world)) say(world, 'Патронов нет.', 1.4);
     }
