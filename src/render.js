@@ -843,6 +843,22 @@ function drawHud(r, world) {
     drawBottomHud(r, world);
 }
 
+/** Разбить строку по словам под заданную ширину. Не больше трёх строк. */
+function wrap(ctx, text, width) {
+    const words = text.split(' ');
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+        const next = line ? `${line} ${word}` : word;
+        if (ctx.measureText(next).width > width && line) {
+            lines.push(line);
+            line = word;
+        } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines.slice(0, 3);
+}
+
 /** Нижняя строка: что у тебя есть и что ты сейчас делаешь. */
 function drawBottomHud(r, world) {
     const { ctx } = r;
@@ -869,10 +885,15 @@ function drawBottomHud(r, world) {
     }
 
     if (world.hint) {
+        // Строка переносится по словам: на узком экране она обрезалась с
+        // обеих сторон, и от подсказки оставалось «…верь открыта».
         ctx.textAlign = 'center';
         ctx.font = '11px system-ui, sans-serif';
         ctx.fillStyle = `rgba(230,238,250,${Math.min(1, world.hintT)})`;
-        ctx.fillText(world.hint, VIEW.w / 2, VIEW.h - 34);
+        const lines = wrap(ctx, world.hint, VIEW.w - 32);
+        lines.forEach((line, i) => {
+            ctx.fillText(line, VIEW.w / 2, VIEW.h - 34 - (lines.length - 1 - i) * 13);
+        });
     }
 }
 
