@@ -76,33 +76,62 @@ body {
 #keys b { color: #9fb0c8; font-weight: 600; }
 
 /* Пальцевое управление показывается только там, где пальцем и играют. */
-#pad, #buttons { display: none; }
+#controls { display: none; }
 
-@media (pointer: coarse) {
-    #pad {
-        display: block;
-        position: absolute;
-        left: 0; bottom: 0;
-        width: 45%; height: 70%;
+@media (pointer: coarse), (max-width: 700px) {
+    /*
+     * На телефоне кадр вытягивается ближе к квадрату: при 16:9 на экране
+     * 390×844 игра превращалась в узкую полосу посреди чёрного листа.
+     * Площадь видимого мира от этого не меняется — её держит fitView.
+     */
+    #stage {
+        aspect-ratio: 4 / 5;
+        max-height: calc(100svh - 210px);
+    }
+
+    /*
+     * Управление живёт ПОД кадром. Кнопка на игровом поле закрывает собой
+     * ровно то, ради чего её нажимают: укрытие, стража, строку задачи.
+     */
+    #controls {
+        display: flex;
+        width: min(100%, 1000px);
+        gap: 10px;
+        align-items: center;
         touch-action: none;
     }
+
+    #pad {
+        flex: 0 0 40%;
+        height: 132px;
+        border: 1px dashed #29334a;
+        border-radius: 12px;
+        background: rgba(120, 160, 220, 0.05);
+        touch-action: none;
+    }
+
     #buttons {
         display: grid;
-        position: absolute;
-        right: 6px; bottom: 6px;
-        grid-template-columns: repeat(3, 52px);
+        flex: 1;
+        grid-template-columns: repeat(4, 1fr);
         gap: 6px;
         touch-action: none;
     }
+
     #buttons button {
-        width: 52px; height: 42px;
+        height: 42px;
+        padding: 0 2px;
         border-radius: 8px;
         border: 1px solid #33405a;
-        background: rgba(18, 24, 38, 0.72);
+        background: rgba(18, 24, 38, 0.9);
         color: #cdd6e4;
-        font: 600 11px/1.1 system-ui, sans-serif;
+        /* Одно слово в строку и без переносов: «крас-ться» читается поломкой. */
+        font: 600 11px/1 system-ui, sans-serif;
+        white-space: nowrap;
+        overflow: hidden;
         touch-action: none;
     }
+
     #buttons button.on { background: rgba(60, 120, 190, 0.55); }
     #keys { display: none; }
 }

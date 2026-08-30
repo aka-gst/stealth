@@ -23,16 +23,25 @@
 </div>
 <div id="stage">
     <canvas id="game"></canvas>
-    <div id="pad" aria-hidden="true"></div>
-    <div id="buttons" aria-hidden="true">
-        <button id="b-creep" type="button">крас<br>ться</button>
-        <button id="b-coin" type="button">моне<br>та</button>
+</div>
+<!--
+  Управление пальцем живёт ПОД кадром, а не поверх него. Кнопка, лежащая на
+  игровом поле, закрывает собой ровно то, ради чего её нажимают: укрытие,
+  стража, строку задачи. В стелсе это дороже, чем где-либо: половина игры —
+  смотреть, куда смотрит чужой конус.
+-->
+<div id="controls" aria-hidden="true">
+    <div id="pad"></div>
+    <div id="buttons">
+        <button id="b-creep" type="button">тихо</button>
+        <button id="b-prone" type="button">лечь</button>
         <button id="b-act" type="button">снять</button>
         <button id="b-kill" type="button">нож</button>
-        <button id="b-box" type="button">короб<br>ка</button>
-        <button id="b-prone" type="button">лечь</button>
+        <button id="b-box" type="button">короб</button>
+        <button id="b-coin" type="button">монета</button>
         <button id="b-fire" type="button">огонь</button>
     </div>
+</div>
 </div>
 <p id="keys">
     <b>WASD</b> идти · <b>C</b> красться · <b>Z</b> лечь · <b>V</b> выглянуть из-за угла ·
