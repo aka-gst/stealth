@@ -61,7 +61,21 @@ export function createRenderer(canvas) {
     const ctx = canvas.getContext('2d');
     const shade = document.createElement('canvas');
     const shadeCtx = shade.getContext('2d');
-    return { canvas, ctx, shade, shadeCtx, dpr: 1, cam: { x: 0, y: 0, s: 1 }, zone: null };
+    return {
+        canvas,
+        ctx,
+        shade,
+        shadeCtx,
+        dpr: 1,
+        cam: { x: 0, y: 0, s: 1 },
+        zone: null,
+        /**
+         * Крупный план для витрины: {x, y, scale}. Пока он стоит, камера
+         * не спрашивает комнату и не рисует ничего служебного — в кадре
+         * должен быть человек, а не интерфейс.
+         */
+        focus: null,
+    };
 }
 
 /** Вернуть матрицу к «логический пиксель кадра», не потеряв плотность экрана. */
@@ -84,6 +98,16 @@ const clamp = (lo, v, hi) => Math.min(hi, Math.max(lo, v));
 function camera(r, world, dt) {
     const p = world.player;
     const { level } = world;
+
+    // Крупный план: кадр ставится точкой и масштабом, без комнат и границ.
+    // Планировка тут не нужна вовсе, нужен человек, который подходит сзади.
+    if (r.focus) {
+        r.cam.s = r.focus.scale;
+        r.cam.x = r.focus.x - VIEW.w / (2 * r.cam.s);
+        r.cam.y = r.focus.y - VIEW.h / (2 * r.cam.s);
+        r.zone = { name: '' };
+        return;
+    }
     const zone = zoneAt(level, p.x, p.y)
         ?? { x0: 0, y0: 0, x1: level.pixelW, y1: level.pixelH, name: world.levelName ?? '' };
     r.zone = zone;
@@ -140,6 +164,8 @@ export function draw(r, world, dt = 1 / 60) {
     drawPlayer(ctx, world);
     drawBullets(ctx, world);
     drawMarks(ctx, world);
+
+    if (r.focus) return;
 
     drawObjective(r, world);
     drawRadar(r, world);

@@ -82,7 +82,7 @@ export function emitNoise(w, x, y, radius, kind = 'step') {
     w.events.push({ kind, x, y, radius });
     for (const g of w.guards) hearNoise(g, x, y, radius);
     // Выстрел слышит весь объект и понимает, что чужой внутри.
-    if (kind === 'shot') disturb(w.alarm, x, y);
+    if (kind === 'shot') disturb(w.alarm, x, y, w.rules.alarmScale);
 }
 
 const litAt = (w, x, y) => illumination(w.level, w.lights, x, y);
@@ -507,7 +507,7 @@ export function updateWorld(w, input, dt) {
     if (w.tracks.length && w.tracks[0].life <= 0) w.tracks = w.tracks.filter((t) => t.life > 0);
     stepBullets(w, dt);
     stepCoins(w, dt);
-    updateAlarm(w.alarm, dt);
+    updateAlarm(w.alarm, dt, w.rules.alarmScale);
 
     if (w.alarm.state !== wasAlarm) w.events.push({ kind: `alarm-${w.alarm.state}` });
 

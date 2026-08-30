@@ -6,8 +6,13 @@
  * ты сам и задумал. Поэтому здесь три бота, и каждый играет по-своему.
  *
  *   напролом — идёт кратчайшим путём и не смотрит по сторонам;
+ *   грубо    — бежит напрямик, но, попавшись, прячется и ждёт отбоя;
  *   в тени   — считает стоимость клетки по свету и чужим конусам;
  *   громко   — то же напролом, но стреляет во всё, что видит.
+ *
+ * «Грубо» — проверка второй дороги. Она существует только тогда, когда за
+ * шум платят временем, а не жизнью: если этот бот доходит, у игры есть
+ * второй способ; если гибнет или стоит вечно — второго способа нет.
  *
  * Полезен не столько зелёный ответ, сколько красный: «в тени» не дошёл —
  * значит, тихого маршрута на карте нет, и это ошибка расстановки, а не
@@ -46,7 +51,10 @@ function shadowField(w, tx, ty) {
         for (const g of w.guards) {
             if (isOut(g)) continue;
             const d = Math.hypot(g.x - x, g.y - y);
-            if (d < GUARD.sight) p += 6 * (1 - d / GUARD.sight);
+            // Луч бросаем только туда, куда страж в принципе может дотянуться
+            // взглядом: без этого проверяльщик считает минутами, а не секундами.
+            if (d >= GUARD.sight) continue;
+            p += 6 * (1 - d / GUARD.sight);
             if (canSee(level, g, { x, y, lit: 1, grass: t === GRASS })) p += 320;
         }
         price[i] = p;
@@ -101,7 +109,7 @@ function target(w) {
     return w.level.exit;
 }
 
-function run({ level, kind, limit = 300 }) {
+function run({ level, kind, limit = 150 }) {
     const w = createWorld(level);
     let t = 0;
     let spottedAt = null;
@@ -121,12 +129,12 @@ function run({ level, kind, limit = 300 }) {
         // или тебя продырявили. Второе — обычный ход громкого прохождения,
         // а не поражение: отсидеться и выйти, когда объект успокоится.
         const hurt = kind === 'громко' && w.player.hp <= 2 && w.alarm.state !== 'calm';
-        hiding = kind !== 'напролом'
-            && (hurt || (!gateOpen(w) && (!w.goal || w.goal.taken)));
+        const locked = !gateOpen(w) && (!w.goal || w.goal.taken);
+        hiding = kind !== 'напролом' && (hurt || locked);
 
         refresh -= STEP;
         if (!field || refresh <= 0) {
-            refresh = kind === 'в тени' ? 0.4 : 1.5;
+            refresh = kind === 'в тени' ? 0.5 : (hiding ? 1.5 : 2.5);
             field = kind === 'в тени' || hiding
                 ? shadowField(w, aim.x, aim.y)
                 : flowField(w.level, aim.x, aim.y);
@@ -188,8 +196,8 @@ function run({ level, kind, limit = 300 }) {
         updateWorld(w, {
             ax: wait ? 0 : (step?.x ?? 0),
             ay: wait ? 0 : (step?.y ?? 0),
-            creep: kind !== 'напролом',
-            run: kind === 'напролом',
+            creep: kind === 'в тени' || (hiding && kind !== 'грубо'),
+            run: kind === 'напролом' || (kind === 'грубо' && !hiding),
             aimAngle: null,
         }, STEP);
 
@@ -220,7 +228,7 @@ for (const level of LEVELS) {
         continue;
     }
 
-    const kinds = ['напролом', 'в тени'];
+    const kinds = ['напролом', 'грубо', 'в тени'];
     if ((level.rules?.ammo ?? 6) > 0) kinds.push('громко');
     const results = kinds.map((kind) => run({ level, kind }));
 
@@ -235,11 +243,18 @@ for (const level of LEVELS) {
     }
 
     const shadow = results.find((r) => r.kind === 'в тени');
+    const rough = results.find((r) => r.kind === 'грубо');
     if (shadow.done !== 'win') {
         console.log('  ← тихого маршрута нет: бот в тени не дошёл');
         bad += 1;
     } else if (shadow.spottedAt !== null) {
         console.log('  ← тихий маршрут есть, но бота по дороге заметили');
+    }
+    if (rough.done !== 'win') {
+        console.log('  ← второй дороги нет: грубый бот не дошёл');
+        bad += 1;
+    } else if (rough.spottedAt === null) {
+        console.log('  ← «грубо» здесь не отличается от «тихо»: бегуна не заметили');
     }
 }
 

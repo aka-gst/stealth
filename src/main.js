@@ -144,6 +144,7 @@ if (location.search.includes('debug')) {
          */
         scene(opts = {}) {
             world = start(4);
+            renderer.focus = null;
             world.hint = '';
             world.hintT = 0;
 
@@ -176,6 +177,18 @@ if (location.search.includes('debug')) {
             }
             Object.assign(world.player, { x: start0.x, y: start0.y, angle: 0, vx: 0, vy: 0 });
 
+            /*
+             * Крупный план. На карточке витрины полоса высотой 287 пикселей,
+             * и страж ростом в четырнадцать пикселей холста доезжает до
+             * зрителя четырьмя. Обзор комнаты там не нужен — нужен человек,
+             * который подходит сзади, и он должен занимать треть кадра.
+             *
+             * Заодно это снимает спор про темноту: две серые фигурки в
+             * чёрном поле — беда общего плана. Крупным планом фигуру видно
+             * и в полумраке.
+             */
+            const zoom = opts.close ? (opts.scale ?? 3.2) : 0;
+
             let t = 0;
             let struck = false;
             scenePlay = (dt) => {
@@ -196,9 +209,16 @@ if (location.search.includes('debug')) {
                 // и сцена обязана попадать в него, а не в его край.
                 if (!struck && d < 30) struck = tryTakedown(world, false);
                 world.hint = '';
+                if (zoom) {
+                    renderer.focus = {
+                        x: (world.player.x + g.x) / 2,
+                        y: (world.player.y + g.y) / 2,
+                        scale: zoom,
+                    };
+                }
                 return t;
             };
-            return { length: 2.8, level: world.levelName };
+            return { length: 2.8, level: world.levelName, close: Boolean(zoom) };
         },
 
         sceneStep(dt = 1 / 60) { return scenePlay ? scenePlay(dt) : 0; },
@@ -271,7 +291,7 @@ function loop(now) {
     };
     const frame = input.frame(dt, cam, VIEW);
 
-    if (frame.restart) world = start(index);
+    if (frame.restart) { renderer.focus = null; world = start(index); }
     if (frame.next) world = start(index + 1);
     if (frame.prev) world = start(index - 1);
     if (frame.reset) world = start(0);
