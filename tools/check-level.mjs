@@ -318,5 +318,5 @@ for (const level of LEVELS) {
     }
 }
 
-console.log(bad ? `\nНепроходимых тихо уровней: ${bad}` : '\nВсе уровни проходятся тихо.');
+console.log(bad ? `\nКомнат с изъяном: ${bad}` : '\nВсе комнаты проходятся и тихо, и грубо.');
 process.exitCode = bad ? 1 : 0;
