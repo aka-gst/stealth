@@ -25,6 +25,28 @@ body {
  * диктовать свою высоту, получается петля: холст меряется по контейнеру,
  * контейнер — по холсту, и кадр «уезжает» в квадрат.
  */
+#topbar {
+    width: min(100%, 1000px);
+    display: flex;
+    justify-content: flex-end;
+}
+
+.iconButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid #232a3a;
+    border-radius: 8px;
+    background: #11151f;
+    font-size: 17px;
+    line-height: 1;
+    text-decoration: none;
+}
+
+.iconButton:hover { background: #182034; border-color: #33405a; }
+
 #stage {
     position: relative;
     width: min(100%, 1000px);

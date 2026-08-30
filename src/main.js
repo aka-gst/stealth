@@ -10,11 +10,12 @@ import { STEP, VIEW, fitView } from './tuning.js';
 import { LEVELS } from './levels.js';
 import {
     createWorld, updateWorld, useAction, tryTakedown, toggleBox,
-    throwCoin, firePistol, say, fatesOf,
+    throwCoin, firePistol, say, fatesOf, rankOf,
 } from './world.js';
 import { createRenderer, draw, drawEpilogue } from './render.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
+import { pulse } from './pulse.js';
 
 const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
@@ -105,6 +106,7 @@ function start(i) {
     w.levelTotal = LEVELS.length;
     w.last = index === LEVELS.length - 1;
     say(w, level.brief, 6);
+    pulse.roomStarted(index, level.name);
     return w;
 }
 
@@ -189,12 +191,20 @@ function loop(now) {
     if (frame.reset) world = start(0);
 
     // Уровень сдан — дальше по кнопке, а не сам собой: итог надо прочитать.
-    if (world.done === 'win' && !world.recorded) {
+    if (world.done && !world.recorded) {
         world.recorded = true;
-        recordFates(world);
+        if (world.done === 'win') {
+            recordFates(world);
+            pulse.roomDone(index, world.levelName, world.time, rankOf(world).rank);
+        } else {
+            pulse.roomFailed(index, world.levelName, world.time);
+        }
     }
     if (world.done === 'win' && world.doneT > 0.6 && (frame.action || frame.fire)) {
-        if (world.last) epilogue = epilogueData();
+        if (world.last) {
+            epilogue = epilogueData();
+            pulse.escaped(epilogue.killed.length, epilogue.downed, epilogue.spared);
+        }
         else world = start(index + 1);
     }
     if (world.done === 'lose' && world.doneT > 0.6 && (frame.action || frame.fire)) {

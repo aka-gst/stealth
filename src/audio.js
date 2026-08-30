@@ -10,6 +10,15 @@
  * вышел на гравий, не глядя под ноги.
  */
 
+/**
+ * Настоящие шаги по четырём поверхностям — по шесть вариантов на каждую,
+ * чтобы ходьба не превращалась в метроном. Синтез остаётся запасным
+ * вариантом: если пак не доехал или браузер не смог его раскодировать,
+ * игра обязана звучать всё равно — слух здесь половина жанра.
+ */
+const STEP_PACK = { 1: 'concrete', 1.8: 'gravel', 0.3: 'snow', 0.25: 'grass' };
+const STEP_VARIANTS = 6;
+
 const SURFACE_VOICE = {
     // множитель поверхности -> тембр шага
     1: { freq: 1500, q: 1.1, dur: 0.07, gain: 1 },      // бетон
@@ -27,6 +36,9 @@ export function createAudio() {
     let master = null;
     let muted = false;
     let pulse = 0;
+    /** Раскодированные шаги: поверхность -> массив буферов. */
+    const steps = {};
+    let loading = false;
 
     function ensure() {
         if (!ctx) {
@@ -38,7 +50,42 @@ export function createAudio() {
             master.connect(ctx.destination);
         }
         if (ctx.state === 'suspended') ctx.resume();
+        loadSteps();
         return ctx;
+    }
+
+    /**
+     * Пак грузится один раз и в фоне. Ни один сбой не должен мешать игре:
+     * не доехал файл — просто останется синтез.
+     */
+    function loadSteps() {
+        if (loading || !ctx) return;
+        loading = true;
+        for (const surface of Object.values(STEP_PACK)) {
+            steps[surface] = [];
+            for (let i = 1; i <= STEP_VARIANTS; i += 1) {
+                const url = new URL(`../sfx/step-${surface}-${i}.wav`, import.meta.url).href;
+                fetch(url)
+                    .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+                    .then((buf) => ctx.decodeAudioData(buf))
+                    .then((decoded) => { steps[surface].push(decoded); })
+                    .catch(() => { /* останется синтез */ });
+            }
+        }
+    }
+
+    /** Проиграть готовый шаг. Скорость чуть гуляет, чтобы не было метронома. */
+    function sample(surface, vol) {
+        const bank = steps[surface];
+        if (!bank || !bank.length) return false;
+        const src = ctx.createBufferSource();
+        src.buffer = bank[Math.floor(Math.random() * bank.length)];
+        src.playbackRate.value = 0.92 + Math.random() * 0.16;
+        const gain = ctx.createGain();
+        gain.gain.value = vol;
+        src.connect(gain).connect(master);
+        src.start();
+        return true;
     }
 
     /** Короткий тон с завалом громкости. Из них собрано почти всё. */
@@ -84,8 +131,11 @@ export function createAudio() {
         if (!ctx || muted) return;
         switch (e.kind) {
             case 'foot': {
+                const gain = MODE_GAIN[e.mode] ?? 0.3;
+                const surface = STEP_PACK[e.surface] ?? 'concrete';
+                if (sample(surface, gain * 1.1)) break;
                 const v = SURFACE_VOICE[e.surface] ?? SURFACE_VOICE[1];
-                burst({ freq: v.freq, q: v.q, dur: v.dur, vol: (MODE_GAIN[e.mode] ?? 0.3) * v.gain * 0.5 });
+                burst({ freq: v.freq, q: v.q, dur: v.dur, vol: gain * v.gain * 0.5 });
                 break;
             }
             case 'knock':

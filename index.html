@@ -4,9 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
 <title>ПЕРИМЕТР</title>
+<!--
+  Обезличенный счётчик — тот же Umami, что на главной и на остальных играх:
+  без кук, без профилей. Ставится в момент создания страницы, иначе игра
+  живёт, а знать, играет ли в неё кто-нибудь, нельзя.
+-->
+<script defer src="/pulse/script.js" data-website-id="de024048-c4c3-4639-bbdf-808c558f6d71"></script>
 <link rel="stylesheet" href="./styles/game.css">
 </head>
 <body>
+<div id="topbar">
+    <!--
+      Не ⌂ (U+2302): в системных шрифтах у него нет начертания, и кнопка
+      выглядит пустым квадратом — то есть её будто и нет. Взято из ACID UNO,
+      где на эти грабли уже наступили.
+    -->
+    <a id="homeLink" class="iconButton" href="../" aria-label="На главную" title="На главную">🏠</a>
+</div>
 <div id="stage">
     <canvas id="game"></canvas>
     <div id="pad" aria-hidden="true"></div>

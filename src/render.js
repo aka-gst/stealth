@@ -25,17 +25,17 @@ const COL = {
     // видимой гранью, всё насыщенное. Тьма здесь — приправа отдельных
     // уровней, а не общее состояние: механику, которую ещё не объяснили,
     // нельзя вдобавок прятать в темноте.
-    floor: '#4b4a3c',
-    floorAlt: '#454434',
-    wall: '#6a7180',
-    wallTop: '#8d95a6',
-    wallEdge: '#3c4150',
-    crate: '#8a6636',
-    crateTop: '#ab8149',
-    grass: '#33512c',
-    grassTip: '#5c8a4c',
-    gravel: '#5f584a',
-    gravelDot: '#918872',
+    floor: '#5b5844',
+    floorAlt: '#54523e',
+    wall: '#828b9d',
+    wallTop: '#a8b1c4',
+    wallEdge: '#3a3f4d',
+    crate: '#9a7440',
+    crateTop: '#c09154',
+    grass: '#3a5c31',
+    grassTip: '#6b9c58',
+    gravel: '#6d6552',
+    gravelDot: '#a49a80',
     soft: '#8d97a6',
     softTrack: '#5d6674',
     exit: '#49c46d',
@@ -118,7 +118,7 @@ export function draw(r, world, dt = 1 / 60) {
     camera(r, world, dt);
 
     reset(r);
-    ctx.fillStyle = '#14161c';
+    ctx.fillStyle = '#0f1117';
     ctx.fillRect(0, 0, VIEW.w, VIEW.h);
 
     worldSpace(r);
@@ -349,8 +349,12 @@ function drawDarkness(r, world) {
 function drawOutlines(ctx, world, cam) {
     const { level } = world;
     const { x0, y0, x1, y1 } = tilesInView(cam);
-    ctx.strokeStyle = 'rgba(20,26,40,0.30)';
-    ctx.lineWidth = 1;
+    // Контур стен рисуется поверх тьмы и потому должен спорить с ней, а не
+    // сливаться: на светлом уровне линия тёмная, на тёмном — светлая.
+    // Не видеть стража — это игра; не видеть, где стена, — это дефект.
+    const dark = (world.level.ambient ?? 0) < 0.55;
+    ctx.strokeStyle = dark ? 'rgba(160,185,225,0.34)' : 'rgba(16,20,32,0.42)';
+    ctx.lineWidth = dark ? 1.5 : 1;
     ctx.beginPath();
     for (let ty = y0; ty < Math.min(level.h, y1); ty += 1) {
         for (let tx = x0; tx < Math.min(level.w, x1); tx += 1) {
