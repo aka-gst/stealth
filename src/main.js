@@ -126,6 +126,7 @@ if (location.search.includes('debug')) {
         },
         level: (i) => { world = start(i); return world; },
         epilogue: () => { epilogue = epilogueData(); return epilogue; },
+        audio: () => audio,
         fates: () => loadFates(),
         act: (lethal = false) => tryTakedown(world, lethal),
         use: () => useAction(world),

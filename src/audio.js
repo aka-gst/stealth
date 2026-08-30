@@ -34,6 +34,7 @@ const MODE_GAIN = {
 export function createAudio() {
     let ctx = null;
     let master = null;
+    let meter = null;
     let muted = false;
     let pulse = 0;
     /** Раскодированные шаги: поверхность -> массив буферов. */
@@ -47,7 +48,16 @@ export function createAudio() {
             ctx = new AC();
             master = ctx.createGain();
             master.gain.value = 0.34;
-            master.connect(ctx.destination);
+            /*
+             * Щуп на общем узле. «Контекст запущен» не доказывает ничего:
+             * контекст жив, а до колонок могло не дойти — оборванная цепь,
+             * нулевая громкость, не раскодированный буфер. Проверять надо
+             * выход, и `level()` его показывает.
+             */
+            meter = ctx.createAnalyser();
+            meter.fftSize = 512;
+            master.connect(meter);
+            meter.connect(ctx.destination);
         }
         if (ctx.state === 'suspended') ctx.resume();
         loadSteps();
@@ -217,9 +227,20 @@ export function createAudio() {
         });
     }
 
+    /** Громкость на выходе прямо сейчас, 0..1. Тишина — это ровно ноль. */
+    function level() {
+        if (!meter) return 0;
+        const buf = new Float32Array(meter.fftSize);
+        meter.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (const v of buf) sum += v * v;
+        return Math.sqrt(sum / buf.length);
+    }
+
     return {
         ensure,
         play,
+        level,
         update,
         toggle() { muted = !muted; return muted; },
         get muted() { return muted; },
