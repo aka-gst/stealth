@@ -7,7 +7,12 @@ html { touch-action: manipulation; }
 body {
     margin: 0;
     touch-action: manipulation;
-    background: #07090f;
+    /*
+     * Не совсем чёрный. Поле вокруг кадра занимает почти половину экрана, и
+     * при яркости 9 из 255 любой замер по всей странице читает игру как
+     * чёрный прямоугольник — даже когда сам кадр светлый.
+     */
+    background: #141822;
     color: #cdd6e4;
     font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
     display: flex;
