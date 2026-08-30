@@ -30,7 +30,7 @@ import { flowField, flowStep, tileAt, WALL, CRATE, GRASS, EXIT } from '../src/le
 import { illumination } from '../src/light.js';
 import { canSee, sightReach } from '../src/vision.js';
 import { isOut, isBehind } from '../src/guard.js';
-import { TILE, GUARD } from '../src/tuning.js';
+import { TILE, GUARD, PLAYER } from '../src/tuning.js';
 
 const STEP = 1 / 120;
 
@@ -168,10 +168,33 @@ function run({ level, kind, limit = 150 }) {
         // Бот умеет ровно два действия помимо ходьбы: снять со спины и
         // бросить монету, когда встал намертво. Этого хватает, чтобы
         // проверить уровни, где без них не пройти.
+        /*
+         * Заход за спину. Кратчайший путь ведёт бота к стражу сбоку, а
+         * сбоку снять нельзя: его нащупывают раньше, чем он дотянется. Как
+         * и живой игрок, бот сначала встаёт за спину и только потом бьёт.
+         */
+        let behindPoint = null;
         if (kind === 'в тени') {
             for (const g of w.guards) {
                 if (isOut(g)) continue;
-                if (Math.hypot(g.x - w.player.x, g.y - w.player.y) > 24) continue;
+                const dist = Math.hypot(g.x - w.player.x, g.y - w.player.y);
+                if (dist < 90 && !isBehind(g, w.player.x, w.player.y)) {
+                    behindPoint = {
+                        x: g.x - Math.cos(g.angle) * (PLAYER.reach - 6),
+                        y: g.y - Math.sin(g.angle) * (PLAYER.reach - 6),
+                    };
+                    break;
+                }
+            }
+            for (const g of w.guards) {
+                if (isOut(g)) continue;
+                /*
+                 * Бить надо раньше, чем страж нащупает: дистанция снятия
+                 * 32, радиус чутья 26 на полном свету. Пока бот подходил
+                 * на 24, он попадал внутрь чутья и объявлял непроходимым
+                 * уровень, который ровно снятию и учит.
+                 */
+                if (Math.hypot(g.x - w.player.x, g.y - w.player.y) > PLAYER.reach - 2) continue;
                 if (!isBehind(g, w.player.x, w.player.y)) continue;
                 tryTakedown(w, false);
                 break;
@@ -219,9 +242,19 @@ function run({ level, kind, limit = 150 }) {
                 } else if (patience > 6) { patience = 0; push = 1.6; wait = false; }
             } else if (!risky) patience = 0;
         }
+        // Пока идём за спину, слушаемся этой цели, а не волны пути.
+        let dirX = step?.x ?? 0;
+        let dirY = step?.y ?? 0;
+        if (behindPoint) {
+            const bx = behindPoint.x - w.player.x;
+            const by = behindPoint.y - w.player.y;
+            const bl = Math.hypot(bx, by) || 1;
+            if (bl > 4) { dirX = bx / bl; dirY = by / bl; wait = false; }
+        }
+
         updateWorld(w, {
-            ax: wait ? 0 : (step?.x ?? 0),
-            ay: wait ? 0 : (step?.y ?? 0),
+            ax: wait ? 0 : dirX,
+            ay: wait ? 0 : dirY,
             creep: kind === 'в тени' || (hiding && kind !== 'грубо'),
             run: kind === 'напролом' || (kind === 'грубо' && !hiding),
             aimAngle: null,
