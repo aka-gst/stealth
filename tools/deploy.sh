@@ -38,7 +38,7 @@ npm test --silent >/dev/null 2>&1 || {
 }
 
 echo "проверка проходимости уровней"
-node tools/check-level.mjs >/dev/null || {
+node tools/check-level.mjs --quick >/dev/null || {
   echo "ОШИБКА: какой-то уровень не проходится тихо, выкладка отменена" >&2
   exit 1
 }

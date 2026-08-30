@@ -14,6 +14,11 @@
  * шум платят временем, а не жизнью: если этот бот доходит, у игры есть
  * второй способ; если гибнет или стоит вечно — второго способа нет.
  *
+ * Запуск без ключей гоняет всех ботов и считает минуты — это работа по
+ * планировке. Ключ `--quick` оставляет только «в тени» и короткий отсчёт:
+ * это ворота выкладки, где проверяется одно — существует ли тихий маршрут.
+ * Медленная проверка в воротах приводит к тому, что ворота обходят.
+ *
  * Полезен не столько зелёный ответ, сколько красный: «в тени» не дошёл —
  * значит, тихого маршрута на карте нет, и это ошибка расстановки, а не
  * игрока. Запуск: node tools/check-level.mjs
@@ -28,6 +33,20 @@ import { isOut, isBehind } from '../src/guard.js';
 import { TILE, GUARD } from '../src/tuning.js';
 
 const STEP = 1 / 120;
+
+/*
+ * Одинаковое зерно на каждый прогон.
+ *
+ * В игре есть случайность: стражи выбирают точки прочёсывания, болтают и
+ * тянут варианты шагов из банка. От этого один и тот же уровень давал то
+ * победу за 16 секунд, то таймаут, и проверяльщику нельзя было верить —
+ * а непроверяемая проверка хуже отсутствующей: она даёт ложную опору.
+ */
+const random = () => {
+    random.seed = (random.seed * 1664525 + 1013904223) >>> 0;
+    return random.seed / 4294967296;
+};
+Math.random = random;
 
 /**
  * Волна с ценой клетки: свет и чужие конусы дороже, трава дешевле. Тот же
@@ -110,6 +129,7 @@ function target(w) {
 }
 
 function run({ level, kind, limit = 150 }) {
+    random.seed = 20260830;
     const w = createWorld(level);
     let t = 0;
     let spottedAt = null;
@@ -119,6 +139,7 @@ function run({ level, kind, limit = 150 }) {
     let patience = 0;
     let stuck = 0;
     let push = 0;
+    let coinCd = 0;
     let lastX = null;
     let lastY = null;
 
@@ -157,11 +178,7 @@ function run({ level, kind, limit = 150 }) {
             }
             const moved = Math.hypot(w.player.x - (lastX ?? 0), w.player.y - (lastY ?? 0));
             if (moved > 24) { lastX = w.player.x; lastY = w.player.y; stuck = 0; } else stuck += STEP;
-            if (stuck > 3 && w.coinsLeft > 0) {
-                w.player.angle = Math.atan2(aim.y - w.player.y, aim.x - w.player.x) + Math.PI / 2;
-                throwCoin(w);
-                stuck = 0;
-            }
+            coinCd = Math.max(0, coinCd - STEP);
         }
 
         if (kind === 'громко' && !hiding) {
@@ -190,7 +207,16 @@ function run({ level, kind, limit = 150 }) {
             if (risky && push <= 0) {
                 patience += STEP;
                 wait = true;
-                if (patience > 6) { patience = 0; push = 1.6; wait = false; }
+                /*
+                 * Монету бросают не от отчаяния, а увидев, что дальше не
+                 * пройти. Пока бот кидал её, простояв три секунды, он
+                 * успевал попасться раньше — и объявлял непроходимым
+                 * уровень, который ровно этому и учит.
+                 */
+                if (coinCd <= 0 && w.coinsLeft > 0) {
+                    w.player.angle = Math.atan2(aim.y - w.player.y, aim.x - w.player.x) + Math.PI / 2;
+                    if (throwCoin(w)) { coinCd = 6; patience = 0; }
+                } else if (patience > 6) { patience = 0; push = 1.6; wait = false; }
             } else if (!risky) patience = 0;
         }
         updateWorld(w, {
@@ -216,6 +242,7 @@ function run({ level, kind, limit = 150 }) {
     return { kind, done: w.done ?? 'таймаут', t, spottedAt, w };
 }
 
+const QUICK = process.argv.includes('--quick');
 let bad = 0;
 
 for (const level of LEVELS) {
@@ -228,9 +255,9 @@ for (const level of LEVELS) {
         continue;
     }
 
-    const kinds = ['напролом', 'грубо', 'в тени'];
-    if ((level.rules?.ammo ?? 6) > 0) kinds.push('громко');
-    const results = kinds.map((kind) => run({ level, kind }));
+    const kinds = QUICK ? ['в тени'] : ['напролом', 'грубо', 'в тени'];
+    if (!QUICK && (level.rules?.ammo ?? 6) > 0) kinds.push('громко');
+    const results = kinds.map((kind) => run({ level, kind, limit: QUICK ? 90 : 150 }));
 
     console.log(`\n${level.name}`);
     for (const r of results) {
@@ -250,10 +277,10 @@ for (const level of LEVELS) {
     } else if (shadow.spottedAt !== null) {
         console.log('  ← тихий маршрут есть, но бота по дороге заметили');
     }
-    if (rough.done !== 'win') {
+    if (rough && rough.done !== 'win') {
         console.log('  ← второй дороги нет: грубый бот не дошёл');
         bad += 1;
-    } else if (rough.spottedAt === null) {
+    } else if (rough && rough.spottedAt === null) {
         console.log('  ← «грубо» здесь не отличается от «тихо»: бегуна не заметили');
     }
 }
