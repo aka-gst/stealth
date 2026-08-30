@@ -77,6 +77,8 @@ function epilogueData() {
 }
 
 let epilogue = null;
+/** Шаг поставленной сцены для витрины. null — сцена не запущена. */
+let scenePlay = null;
 
 function loadIndex() {
     try {
@@ -127,6 +129,66 @@ if (location.search.includes('debug')) {
         level: (i) => { world = start(i); return world; },
         epilogue: () => { epilogue = epilogueData(); return epilogue; },
         audio: () => audio,
+
+        /*
+         * Поставленная сцена для витрины: тёмная комната, страж спиной,
+         * герой подходит крадучись и снимает его.
+         *
+         * Игра даёт снаряд, снимает им кто угодно. Отдавать видеофайл было
+         * бы хуже: он устареет на первой же правке света, а вызов всегда
+         * покажет то, что в игре есть сегодня.
+         *
+         *   perimetr.scene();                     // поставить, вернёт длину
+         *   perimetr.sceneStep(1 / 60);           // шаг, вернёт время
+         *   perimetr.render();                    // и кадр
+         */
+        scene() {
+            world = start(4);
+            world.hint = '';
+            world.hintT = 0;
+
+            const at = (tx, ty) => ({ x: (tx + 0.5) * 24, y: (ty + 0.5) * 24 });
+            // Страж стоит в пятне фонаря, герой выходит на него из темноты
+            // снизу. И свет, и темнота, и то, что в ней происходит, попадают
+            // в один кадр — иначе сцена не про темноту, а про две фигурки.
+            const post = at(8, 6);
+            const g = world.guards[0];
+            Object.assign(g, { x: post.x, y: post.y, angle: -Math.PI / 2, state: 'patrol', waitLeft: 999 });
+            g.route = [{ ...post, wait: 999, look: false }];
+            g.routeIndex = 0;
+            g.lines = [];
+
+            // Страж стоит в пятне фонаря, герой заходит из темноты: и то и
+            // другое видно в кадре, иначе сцена не про свет, а про фигурки.
+            const start0 = at(8, 10);
+            Object.assign(world.player, { x: start0.x, y: start0.y, angle: 0, vx: 0, vy: 0 });
+
+            let t = 0;
+            let struck = false;
+            scenePlay = (dt) => {
+                t += dt;
+                const dx = g.x - world.player.x;
+                const dy = g.y - world.player.y;
+                const d = Math.hypot(dx, dy) || 1;
+                const walking = !struck && t < 2.2;
+                updateWorld(world, {
+                    ax: walking ? dx / d : 0,
+                    ay: walking ? dy / d : 0,
+                    creep: true,
+                    run: false,
+                    aimAngle: null,
+                }, dt);
+                // Бить раньше, чем страж нащупает: дистанция снятия 32,
+                // «чувствует вплотную» — 26 на полном свету. Окно узкое,
+                // и сцена обязана попадать в него, а не в его край.
+                if (!struck && d < 30) struck = tryTakedown(world, false);
+                world.hint = '';
+                return t;
+            };
+            return { length: 2.8, level: world.levelName };
+        },
+
+        sceneStep(dt = 1 / 60) { return scenePlay ? scenePlay(dt) : 0; },
         fates: () => loadFates(),
         act: (lethal = false) => tryTakedown(world, lethal),
         use: () => useAction(world),
