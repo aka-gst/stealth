@@ -142,7 +142,7 @@ if (location.search.includes('debug')) {
          *   perimetr.sceneStep(1 / 60);           // шаг, вернёт время
          *   perimetr.render();                    // и кадр
          */
-        scene() {
+        scene(opts = {}) {
             world = start(4);
             world.hint = '';
             world.hintT = 0;
@@ -161,6 +161,19 @@ if (location.search.includes('debug')) {
             // Страж стоит в пятне фонаря, герой заходит из темноты: и то и
             // другое видно в кадре, иначе сцена не про свет, а про фигурки.
             const start0 = at(8, 10);
+
+            /*
+             * Тёмный вариант: фонарь над стражем гаснет. Так честнее по
+             * букве замысла — «в тёмной комнате», — но видно заметно хуже:
+             * страж рисуется поверх темноты и остаётся фигурой, а герой в
+             * тени тускнеет, и действие приходится угадывать. Решать, что
+             * важнее, должен автор, и для этого ему нужны оба кадра.
+             */
+            if (opts.dark) {
+                const lamp = world.lights[0];
+                lamp.out = 999;
+                lamp.shape = null;
+            }
             Object.assign(world.player, { x: start0.x, y: start0.y, angle: 0, vx: 0, vy: 0 });
 
             let t = 0;
