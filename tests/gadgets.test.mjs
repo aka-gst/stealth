@@ -7,6 +7,7 @@ import {
 } from '../src/world.js';
 import { surfaceAt } from '../src/level.js';
 import { illumination } from '../src/light.js';
+import { wantsQuiet } from '../src/audio.js';
 import { SURFACE, NOISE, LIGHT, GUARD } from '../src/tuning.js';
 
 const idle = { ax: 0, ay: 0, creep: false, run: false, aimAngle: null };
@@ -178,4 +179,24 @@ test('смена позы слышна, а неизменная поза мол�
         if (world.events.some((e) => e.kind === 'pose')) again = true;
     }
     assert.equal(again, false, 'лежать дальше — молча');
+});
+
+test('битый процент в адресе не роняет игру', () => {
+    // decodeURIComponent бросает URIError на «?%zz», и раз строка стояла на
+    // верхнем уровне входного файла, падение обрывало модуль целиком: экран
+    // выглядел нормальным, а игра была мертва. Такие адреса приходят к
+    // живому человеку сами — мессенджер обрезал ссылку, автозамена съела
+    // символ, — и он не сможет объяснить, что сломалось.
+    assert.doesNotThrow(() => wantsQuiet('?%zz'));
+    assert.equal(wantsQuiet('?%zz'), false);
+    assert.equal(wantsQuiet('?%zz&тихо'), true, 'битый кусок не отменяет остальной адрес');
+});
+
+test('немой запуск ловится всеми написаниями и в якоре', () => {
+    for (const good of ['?тихо', '?quiet', '?mute', '?debug&тихо', '#тихо', '?debug#quiet']) {
+        assert.equal(wantsQuiet(good), true, good);
+    }
+    for (const bad of ['', '?debug', '?тихонько', '?quietly']) {
+        assert.equal(wantsQuiet(bad), false, bad);
+    }
 });

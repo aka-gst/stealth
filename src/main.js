@@ -14,7 +14,7 @@ import {
 } from './world.js';
 import { createRenderer, draw, drawEpilogue } from './render.js';
 import { createInput } from './input.js';
-import { createAudio } from './audio.js';
+import { createAudio, wantsQuiet } from './audio.js';
 import { pulse } from './pulse.js';
 
 const canvas = document.getElementById('game');
@@ -29,23 +29,11 @@ const audio = createAudio();
  * слышать музыку на чужих колонках, а глушить снаружи ненадёжно —
  * звуковые контексты оживают при переразмере окна и возврате во вкладку.
  * Пусть игра умеет молчать по адресу.
+ *
+ * Сам разбор живёт в audio.js чистой функцией: его надо уметь проверить
+ * из узла, иначе ошибка в нём проживёт при зелёных наборах.
  */
-// Граница слова \b здесь не работает: кириллица для неё не буква, и
-// «?тихо&debug» не совпадало. Проверяем разделитель явно.
-if (/[?&](тихо|quiet|mute)(&|=|$)/.test(decodeURIComponent(location.search))) audio.toggle();
-
-/*
- * Щипок на тачпаде браузер понимает как «увеличить страницу», и игра
- * уезжает из кадра. Для игры это всегда промах пальцем, а не намерение,
- * поэтому масштабирование страницы запрещаем целиком.
- */
-window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
-for (const evt of ['gesturestart', 'gesturechange', 'gestureend']) {
-    window.addEventListener(evt, (e) => e.preventDefault());
-}
-window.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && ['Equal', 'Minus', 'Digit0'].includes(e.code)) e.preventDefault();
-});
+if (wantsQuiet(location.search + location.hash)) audio.toggle();
 
 // Браузер не даёт звучать до первого касания — заводим на первом же.
 for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
