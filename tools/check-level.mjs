@@ -26,7 +26,7 @@
 
 import { LEVELS } from '../src/levels.js';
 import { createWorld, updateWorld, firePistol, throwCoin, tryTakedown, gateOpen } from '../src/world.js';
-import { flowField, flowStep, tileAt, WALL, CRATE, GRASS, EXIT } from '../src/level.js';
+import { flowField, flowStep, tileAt, zoneAt, WALL, CRATE, GRASS, EXIT } from '../src/level.js';
 import { illumination } from '../src/light.js';
 import { canSee, sightReach } from '../src/vision.js';
 import { isOut, isBehind } from '../src/guard.js';
@@ -128,9 +128,45 @@ function target(w) {
     return w.level.exit;
 }
 
-function run({ level, kind, limit = 150 }) {
-    random.seed = 20260830;
+/**
+ * Сколькими способами проходится уровень — по-настоящему, а не по замыслу.
+ *
+ * «Проходится четырьмя способами» легко написать и трудно проверить: глазами
+ * видно только тот путь, который сам и задумал. Здесь способ определяется
+ * двумя вещами сразу — **чем боту разрешено пользоваться** и **через какие
+ * комнаты он прошёл**. Второе берётся из зон камеры, они уже размечены.
+ *
+ * Два прохождения считаются разными, если различается хоть одно: набор
+ * умений или цепочка комнат.
+ */
+/**
+ * Подпись маршрута: через какие места он прошёл.
+ *
+ * Комнаты камеры годятся, но размечены только на объекте, и на остальных
+ * семи уровнях подпись выходила пустой — измеритель молча мерил ничего.
+ * Поэтому запасной вариант: девять секторов карты. Грубо, зато есть везде.
+ */
+const SECTORS = [['СЗ', 'С', 'СВ'], ['З', 'Ц', 'В'], ['ЮЗ', 'Ю', 'ЮВ']];
+
+function sector(level, x, y) {
+    const zone = zoneAt(level, x, y);
+    if (zone?.name) return zone.name;
+    const col = Math.min(2, Math.floor((x / level.pixelW) * 3));
+    const row = Math.min(2, Math.floor((y / level.pixelH) * 3));
+    return SECTORS[row][col];
+}
+
+const WAYS = [
+    { name: 'переждать', caps: { coins: false, takedown: false } },
+    { name: 'отвлечь', caps: { coins: true, takedown: false } },
+    { name: 'убрать', caps: { coins: false, takedown: true } },
+    { name: 'всё сразу', caps: { coins: true, takedown: true } },
+];
+
+function run({ level, kind, limit = 150, caps = null, seed = 20260830 }) {
+    random.seed = seed;
     const w = createWorld(level);
+    const zonePath = [];
     let t = 0;
     let spottedAt = null;
     let field = null;
@@ -174,7 +210,7 @@ function run({ level, kind, limit = 150 }) {
          * и живой игрок, бот сначала встаёт за спину и только потом бьёт.
          */
         let behindPoint = null;
-        if (kind === 'в тени') {
+        if (kind === 'в тени' && caps?.takedown !== false) {
             for (const g of w.guards) {
                 if (isOut(g)) continue;
                 const dist = Math.hypot(g.x - w.player.x, g.y - w.player.y);
@@ -236,7 +272,7 @@ function run({ level, kind, limit = 150 }) {
                  * успевал попасться раньше — и объявлял непроходимым
                  * уровень, который ровно этому и учит.
                  */
-                if (coinCd <= 0 && w.coinsLeft > 0) {
+                if (coinCd <= 0 && w.coinsLeft > 0 && caps?.coins !== false) {
                     w.player.angle = Math.atan2(aim.y - w.player.y, aim.x - w.player.x) + Math.PI / 2;
                     if (throwCoin(w)) { coinCd = 6; patience = 0; }
                 } else if (patience > 6) { patience = 0; push = 1.6; wait = false; }
@@ -261,6 +297,8 @@ function run({ level, kind, limit = 150 }) {
         }, STEP);
 
         t += STEP;
+        const mark = sector(w.level, w.player.x, w.player.y);
+        if (zonePath[zonePath.length - 1] !== mark) zonePath.push(mark);
         if (w.alarm.everSpotted && spottedAt === null) {
             spottedAt = t;
             if (process.env.WHERE) {
@@ -272,11 +310,44 @@ function run({ level, kind, limit = 150 }) {
         }
     }
 
-    return { kind, done: w.done ?? 'таймаут', t, spottedAt, w };
+    return { kind, done: w.done ?? 'таймаут', t, spottedAt, w, zonePath };
 }
 
 const QUICK = process.argv.includes('--quick');
+const WAYS_ONLY = process.argv.includes('--ways');
 let bad = 0;
+
+/*
+ * Режим подсчёта способов. Каждый набор умений гоняется тремя зёрнами:
+ * одиночный прогон ловит вариант, а не правило, и это верно в обе стороны.
+ */
+if (WAYS_ONLY) {
+    for (const level of LEVELS) {
+        console.log(`\n${level.name}`);
+        const routes = new Map();
+        for (const way of WAYS) {
+            const tries = [20260830, 7771, 424242].map((seed) =>
+                run({ level, kind: 'в тени', caps: way.caps, seed, limit: 120 }));
+            const won = tries.filter((r) => r.done === 'win');
+            const clean = won.filter((r) => r.spottedAt === null);
+            const best = won[0];
+            const path = best ? best.zonePath.join(' → ') : '';
+            if (best) {
+                const seen = routes.get(path) ?? [];
+                seen.push(way.name);
+                routes.set(path, seen);
+            }
+            console.log(
+                `  ${way.name.padEnd(11)} дошёл ${won.length}/3` +
+                `  незамеченным ${clean.length}/3` +
+                (best ? `  ${best.t.toFixed(1)} с  ${path}` : '  —'),
+            );
+        }
+        console.log(`  → различимых маршрутов: ${routes.size}`);
+        for (const [path, ways] of routes) console.log(`     ${ways.join(', ')}: ${path}`);
+    }
+    process.exit(0);
+}
 
 for (const level of LEVELS) {
     // Самая частая ошибка расстановки: выход задан числом, но на карту его
