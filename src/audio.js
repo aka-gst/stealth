@@ -199,6 +199,24 @@ export function createAudio() {
                 burst({ freq: 5200, q: 0.7, dur: 0.28, vol: 0.3, type: 'highpass' });
                 tone({ freq: 3400, to: 2100, dur: 0.2, type: 'triangle', vol: 0.10, delay: 0.05 });
                 break;
+            case 'pose':
+                // Лечь, встать, прижаться к стене. Смена позы — действие
+                // игрока, и молчащее действие ощущается как незасчитанное.
+                burst({ freq: 380, q: 1.4, dur: 0.13, vol: 0.11 });
+                break;
+            case 'box':
+                burst({ freq: 240, q: 0.9, dur: 0.19, vol: 0.15 });
+                tone({ freq: 120, to: 90, dur: 0.14, type: 'triangle', vol: 0.08 });
+                break;
+            case 'deny':
+                /*
+                 * Отказ. Нечего взять, некого снять, патроны кончились.
+                 * Тише всего в игре — это не событие мира, а ответ игре:
+                 * «я тебя услышал, но здесь ничего нет». Без него кнопка
+                 * выглядит нажатой и не отвечающей.
+                 */
+                burst({ freq: 200, q: 2.2, dur: 0.05, vol: 0.07 });
+                break;
             case 'pickup':
                 tone({ freq: 660, dur: 0.1, type: 'triangle', vol: 0.16 });
                 tone({ freq: 990, dur: 0.16, type: 'triangle', vol: 0.16, delay: 0.09 });

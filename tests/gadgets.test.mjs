@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { room, px } from './helpers.mjs';
-import { createWorld, updateWorld, knock, flipSwitch, toggleBox } from '../src/world.js';
+import {
+    createWorld, updateWorld, knock, flipSwitch, toggleBox, useAction, firePistol, throwCoin,
+} from '../src/world.js';
 import { surfaceAt } from '../src/level.js';
 import { illumination } from '../src/light.js';
 import { SURFACE, NOISE, LIGHT, GUARD } from '../src/tuning.js';
@@ -132,4 +134,48 @@ test('на кого наткнулись вплотную, того коробк
     toggleBox(world);
     for (let t = 0; t < GUARD.notice + 0.4; t += 1 / 60) updateWorld(world, idle, 1 / 60);
     assert.equal(world.guards[0].state, 'chase');
+});
+
+test('действие без последствий всё равно отвечает игроку', () => {
+    // Кнопка, которая нажата и молчит, читается как незасчитанная. Игра
+    // обязана ответить даже отказом: «услышал, но здесь ничего нет».
+    const world = createWorld(def());
+    world.player.x = px(5);
+    world.player.y = px(7);
+
+    updateWorld(world, idle, 1 / 120);
+    world.events.length = 0;
+    useAction(world);
+    assert.ok(world.events.some((e) => e.kind === 'deny'), 'снятие в пустоту отвечает отказом');
+
+    world.ammo = 0;
+    world.events.length = 0;
+    firePistol(world);
+    assert.ok(world.events.some((e) => e.kind === 'deny'), 'выстрел без патронов отвечает отказом');
+
+    world.coinsLeft = 0;
+    world.events.length = 0;
+    throwCoin(world);
+    assert.ok(world.events.some((e) => e.kind === 'deny'), 'монета без монет отвечает отказом');
+});
+
+test('смена позы слышна, а неизменная поза молчит', () => {
+    const world = createWorld(def());
+    updateWorld(world, idle, 1 / 120);
+
+    let heard = false;
+    for (let t = 0; t < 0.2; t += 1 / 120) {
+        updateWorld(world, { ...idle, prone: true }, 1 / 120);
+        if (world.events.some((e) => e.kind === 'pose')) heard = true;
+    }
+    assert.equal(world.player.pose, 'prone');
+    assert.equal(heard, true, 'лёг — слышно');
+
+    // Лежать дальше — не событие: звук на каждый кадр превратился бы в шум.
+    let again = false;
+    for (let t = 0; t < 0.5; t += 1 / 120) {
+        updateWorld(world, { ...idle, prone: true }, 1 / 120);
+        if (world.events.some((e) => e.kind === 'pose')) again = true;
+    }
+    assert.equal(again, false, 'лежать дальше — молча');
 });
