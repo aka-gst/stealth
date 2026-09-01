@@ -148,6 +148,74 @@ function target(w) {
  */
 const SECTORS = [['СЗ', 'С', 'СВ'], ['З', 'Ц', 'В'], ['ЮЗ', 'Ю', 'ЮВ']];
 
+/**
+ * Сколько независимых дорог ведёт от входа к выходу — свойство карты, а не
+ * бота.
+ *
+ * Считать маршруты прогонами нельзя: жадный бот всегда идёт кратчайшим
+ * путём и на любой карте даёт «один». Отрицательный контроль поймал это
+ * сразу — на комнате с двумя заведомыми обходами он насчитал одну дорогу.
+ * Меряем структурно: находим путь, перекрываем его узкие места, ищем
+ * следующий. Сколько раз нашлось — столько независимых дорог.
+ *
+ * Узкое место — клетка, у которой не больше двух свободных соседей: именно
+ * такие и разделяют обходы. Перекрывать весь путь нельзя, иначе считаются
+ * не дороги, а их сдвиги на клетку.
+ */
+function routeCount(level, limit = 6) {
+    const w = level.w;
+    const free = (i) => {
+        const t = level.tiles[i];
+        return t !== WALL && t !== CRATE;
+    };
+    const blocked = new Set();
+    const start = Math.floor(level.spawn.y / TILE) * w + Math.floor(level.spawn.x / TILE);
+    const goal = Math.floor(level.exit.y / TILE) * w + Math.floor(level.exit.x / TILE);
+    const routes = [];
+
+    while (routes.length < limit) {
+        const from = new Int32Array(level.w * level.h).fill(-2);
+        const queue = [start];
+        from[start] = -1;
+        let found = false;
+        for (let head = 0; head < queue.length && !found; head += 1) {
+            const at = queue[head];
+            if (at === goal) { found = true; break; }
+            const ax = at % w;
+            for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const nx = ax + ox;
+                const ny = ((at / w) | 0) + oy;
+                if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
+                const idx = ny * w + nx;
+                if (from[idx] !== -2 || !free(idx) || blocked.has(idx)) continue;
+                from[idx] = at;
+                queue.push(idx);
+            }
+        }
+        if (from[goal] === -2) break;
+
+        const path = [];
+        for (let at = goal; at !== -1; at = from[at]) path.push(at);
+        routes.push(path.length);
+
+        for (const idx of path) {
+            if (idx === start || idx === goal) continue;
+            const x = idx % w;
+            const y = (idx / w) | 0;
+            let open = 0;
+            for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const nx = x + ox;
+                const ny = y + oy;
+                if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
+                if (free(ny * w + nx)) open += 1;
+            }
+            if (open <= 2) blocked.add(idx);
+        }
+        if (!blocked.size) break;
+    }
+    return routes.length;
+}
+
 function sector(level, x, y) {
     const zone = zoneAt(level, x, y);
     if (zone?.name) return zone.name;
@@ -322,6 +390,55 @@ let bad = 0;
  * одиночный прогон ловит вариант, а не правило, и это верно в обе стороны.
  */
 if (WAYS_ONLY) {
+    /*
+     * Отрицательный контроль измерителя.
+     *
+     * У подписи маршрута уже нашлась одна слепота — она бралась из зон
+     * камеры и на семи уровнях выходила пустой. Раз одна нашлась, надо
+     * искать вторую: прогоняем измеритель там, где ответ известен заранее.
+     * «Развилка» проходится двумя сторонами, «Труба» — только одной.
+     * Скажет иначе — врёт он, а не игра.
+     */
+    const room = (map, spawn, exit) => ({
+        name: '', map, spawn, exit, lights: [], guards: [], ambient: 1,
+        rules: { coins: 0, ammo: 0, box: false },
+    });
+    const CONTROL = [
+        ['Развилка (ждём 2)', room([
+            '####################',
+            '#..................#',
+            '#..................#',
+            '#....##########....#',
+            '#....##########....#',
+            '#....##########....#',
+            '#..................#',
+            '#.................X#',
+            '####################',
+        ], { x: 2, y: 4 }, { x: 18, y: 7 }), 2],
+        ['Труба (ждём 1)', room([
+            '####################',
+            '####################',
+            '#..................#',
+            '#.................X#',
+            '####################',
+            '####################',
+        ], { x: 2, y: 2 }, { x: 18, y: 3 }), 1],
+    ];
+
+    console.log('Отрицательный контроль измерителя');
+    for (const [name, level, want] of CONTROL) {
+        const seen = new Set();
+        for (const seed of [1, 2, 3, 4, 5, 6]) {
+            const r = run({ level, kind: 'напролом', seed, limit: 40 });
+            if (r.done === 'win') seen.add(r.zonePath.join(' → '));
+        }
+        const built = createWorld(level);
+        const structural = routeCount(built.level);
+        const verdict = structural === want ? 'ок' : 'ИЗМЕРИТЕЛЬ СЛЕП';
+        console.log(`  ${name.padEnd(20)} дорог по карте ${structural}, ждали ${want}  ${verdict}` +
+            `  (прогонами бот нашёл ${seen.size} — он всегда идёт кратчайшим)`);
+    }
+
     for (const level of LEVELS) {
         console.log(`\n${level.name}`);
         const routes = new Map();
@@ -331,6 +448,7 @@ if (WAYS_ONLY) {
             const won = tries.filter((r) => r.done === 'win');
             const clean = won.filter((r) => r.spottedAt === null);
             const best = won[0];
+            const used = tries.reduce((n, r) => n + r.w.stats.coins + r.w.stats.downed + r.w.stats.killed, 0);
             const path = best ? best.zonePath.join(' → ') : '';
             if (best) {
                 const seen = routes.get(path) ?? [];
@@ -340,10 +458,13 @@ if (WAYS_ONLY) {
             console.log(
                 `  ${way.name.padEnd(11)} дошёл ${won.length}/3` +
                 `  незамеченным ${clean.length}/3` +
+                `  умения применены ${used} раз` +
                 (best ? `  ${best.t.toFixed(1)} с  ${path}` : '  —'),
             );
         }
-        console.log(`  → различимых маршрутов: ${routes.size}`);
+        const built = createWorld(level);
+        console.log(`  → дорог по карте: ${routeCount(built.level)}` +
+            `, различимых прогонами: ${routes.size}`);
         for (const [path, ways] of routes) console.log(`     ${ways.join(', ')}: ${path}`);
     }
     process.exit(0);
