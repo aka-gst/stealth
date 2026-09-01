@@ -79,12 +79,31 @@ function shadowField(w, tx, ty) {
         price[i] = p;
     }
 
-    // Дейкстра на маленьком поле: тысяча клеток, сортировать нечего.
+    /*
+     * Дейкстра. Раньше здесь стояло «поле маленькое, сортировать нечего»:
+     * очередь перебиралась линейно, клетка клалась в неё заново при каждом
+     * улучшении, а разобранные не помечались.
+     *
+     * На тесной комнате со стражем это обошлось в тысячу крат. Штраф за
+     * увиденную клетку — 320 против единицы за тёмную, и при таком разбросе
+     * пути пересматриваются снова и снова: очередь разбухает, а каждый
+     * съём перебирает её целиком. Замер: сорок игровых секунд за двадцать
+     * три настоящих, при том что сам мир считает сто двадцать за сорок две
+     * миллисекунды. То есть решалка бота стоила в тысячу раз дороже игры,
+     * которую проверяла.
+     *
+     * Отметка разобранных даёт тот же ответ — при неотрицательных ценах
+     * повторный съём клетки заведомо хуже первого. Проверено сверкой чисел
+     * на «Тьме» до и после.
+     */
+    const done = new Uint8Array(size);
     const open = [start];
     while (open.length) {
         let bi = 0;
         for (let i = 1; i < open.length; i += 1) if (cost[open[i]] < cost[open[bi]]) bi = i;
         const at = open.splice(bi, 1)[0];
+        if (done[at]) continue;
+        done[at] = 1;
         const ax = at % level.w;
         const ay = (at / level.w) | 0;
         for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -92,7 +111,7 @@ function shadowField(w, tx, ty) {
             const ny = ay + oy;
             if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
             const idx = ny * level.w + nx;
-            if (!Number.isFinite(price[idx])) continue;
+            if (done[idx] || !Number.isFinite(price[idx])) continue;
             const next = cost[at] + price[idx];
             if (next < cost[idx]) { cost[idx] = next; open.push(idx); }
         }
@@ -265,7 +284,16 @@ function run({ level, kind, limit = 150, caps = null, seed = 20260830 }) {
     let lastX = null;
     let lastY = null;
 
+    const wall0 = Date.now();
+    let pulse = wall0;
     while (t < limit && !w.done) {
+        // PULSE=1 показывает, ползёт прогон или встал. Обрывать нельзя:
+        // оборванный прогон даст неверное число молча, а это хуже долгого.
+        if (process.env.PULSE && Date.now() - pulse > 3000) {
+            pulse = Date.now();
+            console.log(`\n   … игровых ${t.toFixed(1)} с из ${limit}` +
+                `, настоящих ${((pulse - wall0) / 1000).toFixed(0)} с`);
+        }
         const aim = target(w);
         // Заперты ворота — прячемся, а не топчемся под ними.
         // Прятаться приходится по двум причинам: ворота заперты тревогой
@@ -642,7 +670,12 @@ if (WAYS_ONLY) {
         ? '  → контроль НЕ пройден: числам ниже верить нельзя'
         : '  → контроль пройден на обеих осях: и проходы, и приёмы');
 
+    // Точечная проверка: ONLY="Со спины" гоняет одну комнату вместо всех.
+    // Сплошной прогон здесь идёт минутами, и гонять его ради одной комнаты —
+    // та самая дорогая привычка, от которой ловишь себя не сразу.
+    const only = process.env.ONLY;
     for (const level of LEVELS) {
+        if (only && level.name !== only) continue;
         console.log(`\n${level.name}`);
         // Способ — пара «проходы + применённые приёмы». Копим сюда все
         // выигранные прогоны, кем бы они ни были найдены.
@@ -659,6 +692,10 @@ if (WAYS_ONLY) {
         let reached = 0;
         let attempts = 0;
         for (const way of WAYS) {
+            // Отметка живости. Долгий прогон, который молча висит,
+            // неотличим от сломанной игры: сегодня он дважды «завис» на
+            // шестой комнате, и оба раза причина была не в ней.
+            process.stdout.write(`  ${way.name.padEnd(11)} …`);
             const tries = [20260830, 7771, 424242].map((seed) =>
                 run({ level, kind: 'в тени', caps: way.caps, seed, limit: 120 }));
             const won = tries.filter((r) => r.done === 'win');
@@ -668,7 +705,7 @@ if (WAYS_ONLY) {
             for (const r of won) add(r, 'замысел');
             const best = won[0];
             console.log(
-                `  ${way.name.padEnd(11)} дошёл ${won.length}/3` +
+                `\r  ${way.name.padEnd(11)} дошёл ${won.length}/3` +
                 `  незамеченным ${clean.length}/3` +
                 (best ? `  ${best.t.toFixed(1)} с  ${wayOf(best, passages)}` : '  —'),
             );
@@ -677,6 +714,7 @@ if (WAYS_ONLY) {
         // Бродяга ищет то, чего никто не закладывал.
         let roamWon = 0;
         const before = new Set(ways.keys());
+        process.stdout.write('  бродяга    …');
         for (let seed = 101; seed <= 125; seed += 1) {
             const r = wander({ level, seed, limit: 70 });
             attempts += 1;
@@ -686,7 +724,7 @@ if (WAYS_ONLY) {
             add(r, 'бродяга');
         }
         const found = [...ways.keys()].filter((k) => !before.has(k));
-        console.log(`  бродяга    дошёл ${roamWon}/25` +
+        console.log(`\r  бродяга    дошёл ${roamWon}/25` +
             (found.length ? `  и нашёл ${found.length}, чего не искали` : '  ничего нового'));
 
         // Первой строкой отчёта — состояние измерителя: сколько прогонов
