@@ -25,7 +25,7 @@
  */
 
 import { LEVELS } from '../src/levels.js';
-import { createWorld, updateWorld, firePistol, throwCoin, tryTakedown, gateOpen } from '../src/world.js';
+import { createWorld, updateWorld, firePistol, throwCoin, tryTakedown, gateOpen, useAction } from '../src/world.js';
 import { flowField, flowStep, tileAt, zoneAt, WALL, CRATE, GRASS, EXIT } from '../src/level.js';
 import { illumination } from '../src/light.js';
 import { canSee, sightReach } from '../src/vision.js';
@@ -149,72 +149,89 @@ function target(w) {
 const SECTORS = [['СЗ', 'С', 'СВ'], ['З', 'Ц', 'В'], ['ЮЗ', 'Ю', 'ЮВ']];
 
 /**
- * Сколько независимых дорог ведёт от входа к выходу — свойство карты, а не
- * бота.
+ * Сколько независимо разных проходов ведёт от входа к выходу.
  *
- * Считать маршруты прогонами нельзя: жадный бот всегда идёт кратчайшим
- * путём и на любой карте даёт «один». Отрицательный контроль поймал это
- * сразу — на комнате с двумя заведомыми обходами он насчитал одну дорогу.
- * Меряем структурно: находим путь, перекрываем его узкие места, ищем
- * следующий. Сколько раз нашлось — столько независимых дорог.
+ * Прежний счётчик перекрывал узкие места найденного пути и искал следующий.
+ * Отрицательный контроль его завалил дважды: на «Развилке» с двумя явными
+ * обходами он давал 1, а на прямой «Трубе» — 6, то есть считал не дороги, а
+ * их сдвиги на клетку. Обе ошибки в разные стороны, и обе выглядели твёрдо.
  *
- * Узкое место — клетка, у которой не больше двух свободных соседей: именно
- * такие и разделяют обходы. Перекрывать весь путь нельзя, иначе считаются
- * не дороги, а их сдвиги на клетку.
+ * Здесь честная величина: число путей, не имеющих ни одной общей клетки
+ * (теорема Менгера — оно же равно самому узкому месту карты). Считается
+ * потоком: каждая клетка расщепляется надвое ребром пропускной способности
+ * один, поэтому дважды через клетку пройти нельзя. Сколько раз удалось
+ * протолкнуть поток — столько по-настоящему разных проходов.
+ *
+ * Возвращает сами пути, а не только их число: по ним потом определяется,
+ * каким проходом шёл конкретный прогон.
  */
-function routeCount(level, limit = 6) {
+function disjointRoutes(level) {
     const w = level.w;
+    const n = level.w * level.h;
     const free = (i) => {
         const t = level.tiles[i];
         return t !== WALL && t !== CRATE;
     };
-    const blocked = new Set();
+    const IN = (v) => v * 2;
+    const OUT = (v) => v * 2 + 1;
+    const cap = new Map();
+    const adj = new Map();
+    const edge = (a, b, c) => {
+        if (!adj.has(a)) adj.set(a, []);
+        if (!adj.has(b)) adj.set(b, []);
+        adj.get(a).push(b);
+        adj.get(b).push(a);
+        cap.set(`${a},${b}`, c);
+        if (!cap.has(`${b},${a}`)) cap.set(`${b},${a}`, 0);
+    };
+    for (let v = 0; v < n; v += 1) {
+        if (!free(v)) continue;
+        edge(IN(v), OUT(v), 1);
+        const x = v % w;
+        const y = (v / w) | 0;
+        for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = x + ox;
+            const ny = y + oy;
+            if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
+            const u = ny * w + nx;
+            if (free(u)) edge(OUT(v), IN(u), 1);
+        }
+    }
     const start = Math.floor(level.spawn.y / TILE) * w + Math.floor(level.spawn.x / TILE);
     const goal = Math.floor(level.exit.y / TILE) * w + Math.floor(level.exit.x / TILE);
+    if (!free(start) || !free(goal)) return [];
+    const src = OUT(start);
+    const dst = IN(goal);
     const routes = [];
-
-    while (routes.length < limit) {
-        const from = new Int32Array(level.w * level.h).fill(-2);
-        const queue = [start];
-        from[start] = -1;
-        let found = false;
-        for (let head = 0; head < queue.length && !found; head += 1) {
+    for (;;) {
+        const prev = new Map([[src, -1]]);
+        const queue = [src];
+        let hit = false;
+        for (let head = 0; head < queue.length && !hit; head += 1) {
             const at = queue[head];
-            if (at === goal) { found = true; break; }
-            const ax = at % w;
-            for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                const nx = ax + ox;
-                const ny = ((at / w) | 0) + oy;
-                if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
-                const idx = ny * w + nx;
-                if (from[idx] !== -2 || !free(idx) || blocked.has(idx)) continue;
-                from[idx] = at;
-                queue.push(idx);
+            for (const to of adj.get(at) ?? []) {
+                if (prev.has(to) || (cap.get(`${at},${to}`) ?? 0) <= 0) continue;
+                prev.set(to, at);
+                if (to === dst) { hit = true; break; }
+                queue.push(to);
             }
         }
-        if (from[goal] === -2) break;
-
-        const path = [];
-        for (let at = goal; at !== -1; at = from[at]) path.push(at);
-        routes.push(path.length);
-
-        for (const idx of path) {
-            if (idx === start || idx === goal) continue;
-            const x = idx % w;
-            const y = (idx / w) | 0;
-            let open = 0;
-            for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                const nx = x + ox;
-                const ny = y + oy;
-                if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
-                if (free(ny * w + nx)) open += 1;
+        if (!hit) break;
+        const cells = [];
+        for (let at = dst; at !== -1; at = prev.get(at)) {
+            const from = prev.get(at);
+            if (from !== -1) {
+                cap.set(`${from},${at}`, cap.get(`${from},${at}`) - 1);
+                cap.set(`${at},${from}`, (cap.get(`${at},${from}`) ?? 0) + 1);
             }
-            if (open <= 2) blocked.add(idx);
+            if (at % 2 === 0) cells.push(at / 2);
         }
-        if (!blocked.size) break;
+        routes.push(new Set(cells));
     }
-    return routes.length;
+    return routes;
 }
+
+const routeCount = (level) => disjointRoutes(level).length;
 
 function sector(level, x, y) {
     const zone = zoneAt(level, x, y);
@@ -235,6 +252,7 @@ function run({ level, kind, limit = 150, caps = null, seed = 20260830 }) {
     random.seed = seed;
     const w = createWorld(level);
     const zonePath = [];
+    const cells = new Set();
     let t = 0;
     let spottedAt = null;
     let field = null;
@@ -365,6 +383,7 @@ function run({ level, kind, limit = 150, caps = null, seed = 20260830 }) {
         }, STEP);
 
         t += STEP;
+        cells.add(Math.floor(w.player.y / TILE) * w.level.w + Math.floor(w.player.x / TILE));
         const mark = sector(w.level, w.player.x, w.player.y);
         if (zonePath[zonePath.length - 1] !== mark) zonePath.push(mark);
         if (w.alarm.everSpotted && spottedAt === null) {
@@ -378,7 +397,118 @@ function run({ level, kind, limit = 150, caps = null, seed = 20260830 }) {
         }
     }
 
-    return { kind, done: w.done ?? 'таймаут', t, spottedAt, w, zonePath };
+    return { kind, done: w.done ?? 'таймаут', t, spottedAt, w, zonePath, cells };
+}
+
+/**
+ * Приёмы, которые игрок ДЕЙСТВИТЕЛЬНО применил.
+ *
+ * Это не то же самое, что разрешённые умения, и разница — вся суть замера.
+ * Прежний измеритель считал набор того, чем боту **позволено** пользоваться:
+ * прогон с разрешёнными монетами шёл в графу «отвлечь», даже если бот не
+ * бросил ни одной. Способ определяется применённым, а не разрешённым, иначе
+ * один и тот же проход считается четырежды.
+ */
+function techniques(w) {
+    const st = w.stats;
+    const used = [];
+    if (st.coins) used.push('монета');
+    if (st.downed) used.push('снятие');
+    if (st.killed) used.push('убийство');
+    if (st.shots) used.push('выстрел');
+    if (st.switches) used.push('рубильник');
+    if (st.boxed) used.push('коробка');
+    if (st.knocks) used.push('стук');
+    if (st.stowed) used.push('прятал тела');
+    return used;
+}
+
+/**
+ * Способ прохождения — по определению автора от 1 сентября 2026.
+ *
+ * Дословно: «пара из обоих... и что ты можешь плюнуть и как-то иначе пройти
+ * все двери-уровни-загадки». То есть способ = **набор пройденных проходов**
+ * плюс **набор применённых приёмов**. Две дороги через одну дверь разными
+ * приёмами — разные способы; одна дорога одним приёмом в другом порядке —
+ * один.
+ *
+ * Пустой набор приёмов — полноправный член пары, и по словам автора самый
+ * ценный: если уровень проходится, не применив ничего, а мы этого не
+ * считаем, число завышено ровно на то, чем игрок гордится. Поэтому «голыми
+ * руками» пишется словами, а не пустой строкой.
+ */
+function wayOf(r, routes) {
+    const used = techniques(r.w);
+    const tools = used.length ? used.sort().join('+') : 'голыми руками';
+    return `${passageOf(r, routes)}  ⟨${tools}⟩`;
+}
+
+/**
+ * Каким проходом шёл прогон.
+ *
+ * Первая попытка писала цепочку секторов со всеми виляниями — и у бродяги
+ * каждый прогон выходил уникальным: контроль показал 36 «способов» там, где
+ * их два. Автор сказал «набор пройденных проходов», а не «цепочка шагов»:
+ * порядок и топтание значения не имеют.
+ *
+ * Поэтому прогон относят к тому из непересекающихся проходов, по клеткам
+ * которого он прошёл больше всего. Прошёл по обоим — считается тот, по
+ * которому прошёл дальше: вышел он всё равно одним.
+ */
+function passageOf(r, routes) {
+    if (!routes.length) return 'проход ?';
+    let bestI = 0;
+    let bestN = -1;
+    routes.forEach((cells, i) => {
+        let n = 0;
+        for (const c of r.cells) if (cells.has(c)) n += 1;
+        if (n > bestN) { bestN = n; bestI = i; }
+    });
+    return `проход ${bestI + 1}`;
+}
+
+/**
+ * Бродяга — бот, который НЕ знает замысла уровня.
+ *
+ * Он нужен, потому что обычный бот по устройству не может найти то, что
+ * автор называет «плюнуть и как-то иначе пройти»: он ходит по волне пути к
+ * цели, то есть ровно по задуманному маршруту, и любой незадуманный обход
+ * для него невидим. Бродяга цели не знает вовсе — идёт в случайную сторону,
+ * держит её несколько секунд, изредка тычет в стены. Что он найдёт помимо
+ * задуманных дорог, и есть самое интересное число.
+ *
+ * Отсюда же его роль в отрицательном контроле: жадный бот на «Развилке»
+ * всегда находил одну сторону, потому что вторая длиннее. Бродяга обязан
+ * найти обе — не найдёт, значит измеритель слеп.
+ */
+function wander({ level, seed, limit = 90 }) {
+    random.seed = seed;
+    const w = createWorld(level);
+    const zonePath = [];
+    const cells = new Set();
+    let t = 0;
+    let dirX = 0;
+    let dirY = 0;
+    let hold = 0;
+    while (t < limit && !w.done) {
+        hold -= STEP;
+        if (hold <= 0) {
+            const a = random() * Math.PI * 2;
+            dirX = Math.cos(a);
+            dirY = Math.sin(a);
+            hold = 0.4 + random() * 1.6;
+            w.player.angle = a;
+            // Изредка тычется во всё подряд — так находятся проходы,
+            // которых никто не закладывал.
+            if (random() < 0.12) useAction(w);
+        }
+        updateWorld(w, { ax: dirX, ay: dirY, creep: false, run: random() < 0.3, aimAngle: null }, STEP);
+        t += STEP;
+        cells.add(Math.floor(w.player.y / TILE) * w.level.w + Math.floor(w.player.x / TILE));
+        const mark = sector(w.level, w.player.x, w.player.y);
+        if (zonePath[zonePath.length - 1] !== mark) zonePath.push(mark);
+    }
+    return { done: w.done ?? 'таймаут', t, spottedAt: null, w, zonePath, cells };
 }
 
 const QUICK = process.argv.includes('--quick');
@@ -415,57 +545,160 @@ if (WAYS_ONLY) {
             '#.................X#',
             '####################',
         ], { x: 2, y: 4 }, { x: 18, y: 7 }), 2],
+        /*
+         * Коридор ровно в одну клетку высотой, и это не придирка к рисунку.
+         * Первая попытка была в две — и контроль честно показал два прохода,
+         * потому что в коридоре шириной в две клетки их и правда два. Врал
+         * не измеритель, а моё ожидание: я назвал «трубой» то, что трубой не
+         * является. Ошибка ровно того рода, ради которой контроль и заводят.
+         */
         ['Труба (ждём 1)', room([
             '####################',
             '####################',
-            '#..................#',
             '#.................X#',
             '####################',
-            '####################',
-        ], { x: 2, y: 2 }, { x: 18, y: 3 }), 1],
+        ], { x: 2, y: 2 }, { x: 18, y: 2 }), 1],
     ];
 
+    /*
+     * Ось приёмов проверяется отдельно, и это не придирка.
+     *
+     * У двух комнат выше приёмов нет вовсе — значит они меряют только ось
+     * проходов, и измеритель, слепой ко второй половине определения, прошёл
+     * бы их не поморщившись. Здесь проход ровно один и страж на пути: мимо
+     * можно прокрасться, а можно снять со спины. Способа два, и различаются
+     * они **только** приёмом. Выйдет один — измеритель видит лишь дороги.
+     */
+    const TOOLS_ROOM = room([
+        '####################',
+        '#.................X#',
+        '#########.##########',
+        '#########.##########',
+        '####################',
+    ], { x: 2, y: 1 }, { x: 18, y: 1 });
+    /*
+     * Страж стоит не в самом коридоре, а в нише под ним, и ходит по ней
+     * вверх-вниз. Это не украшение: первая попытка ставила его прямо в
+     * коридор шириной в клетку — и мимо него нельзя было прокрасться
+     * физически, то есть у одного из двух ожидаемых исходов не было
+     * зелёного варианта вовсе. Проверка, которая не может пройти ни при
+     * каких условиях, ничего не стережёт.
+     *
+     * Ниша — тупик, лишнего прохода она не добавляет: проход по-прежнему
+     * один, а способа два — переждать, пока он отвернётся вниз, или снять
+     * со спины.
+     */
+    TOOLS_ROOM.guards = [{
+        name: 'Контрольный',
+        at: { x: 9, y: 2 }, angle: -Math.PI / 2,
+        route: [{ x: 9, y: 2, wait: 2.5 }, { x: 9, y: 3, wait: 2.5 }],
+    }];
+
     console.log('Отрицательный контроль измерителя');
+    let blind = 0;
     for (const [name, level, want] of CONTROL) {
-        const seen = new Set();
+        // Жадный бот — заведомо слепой участник: он всегда идёт кратчайшим
+        // путём, и на «Развилке» находит одну сторону из двух. Оставлен
+        // нарочно, чтобы было видно, что контроль различает измерители,
+        // а не зеленеет на всём подряд.
+        const greedy = new Set();
         for (const seed of [1, 2, 3, 4, 5, 6]) {
             const r = run({ level, kind: 'напролом', seed, limit: 40 });
-            if (r.done === 'win') seen.add(r.zonePath.join(' → '));
+            if (r.done === 'win') greedy.add(r.zonePath.join(' → '));
         }
         const built = createWorld(level);
-        const structural = routeCount(built.level);
-        const verdict = structural === want ? 'ок' : 'ИЗМЕРИТЕЛЬ СЛЕП';
-        console.log(`  ${name.padEnd(20)} дорог по карте ${structural}, ждали ${want}  ${verdict}` +
-            `  (прогонами бот нашёл ${seen.size} — он всегда идёт кратчайшим)`);
+        const routes = disjointRoutes(built.level);
+        const roam = new Set();
+        for (let seed = 1; seed <= 30; seed += 1) {
+            const r = wander({ level, seed, limit: 60 });
+            if (r.done === 'win') roam.add(passageOf(r, routes));
+        }
+        // Контрольные комнаты пусты, приёмов в них нет — значит они меряют
+        // ось проходов, и сравнивать надо её, а не пару целиком.
+        const ok = routes.length === want && roam.size === want;
+        if (!ok) blind += 1;
+        console.log(`  ${name.padEnd(22)} ждали ${want}` +
+            `  по карте ${routes.length}, бродяга прошёл ${roam.size}` +
+            `  ${ok ? 'ок' : '← ИЗМЕРИТЕЛЬ СЛЕП'}` +
+            `  (жадный ${greedy.size} — он всегда кратчайшим)`);
     }
+    {
+        const routes = disjointRoutes(createWorld(TOOLS_ROOM).level);
+        const seen = new Set();
+        for (const way of [{ takedown: false }, { takedown: true }]) {
+            for (const seed of [11, 22, 33]) {
+                const r = run({ level: TOOLS_ROOM, kind: 'в тени', caps: way, seed, limit: 90 });
+                if (r.done === 'win') seen.add(wayOf(r, routes));
+            }
+        }
+        const ok = seen.size === 2;
+        if (!ok) blind += 1;
+        console.log(`  ${'Страж в трубе (ждём 2)'.padEnd(22)} ждали 2` +
+            `  нашли ${seen.size}  ${ok ? 'ок' : '← ИЗМЕРИТЕЛЬ СЛЕП К ПРИЁМАМ'}`);
+        for (const k of seen) console.log(`     ${k}`);
+    }
+
+    console.log(blind
+        ? '  → контроль НЕ пройден: числам ниже верить нельзя'
+        : '  → контроль пройден на обеих осях: и проходы, и приёмы');
 
     for (const level of LEVELS) {
         console.log(`\n${level.name}`);
-        const routes = new Map();
+        // Способ — пара «проходы + применённые приёмы». Копим сюда все
+        // выигранные прогоны, кем бы они ни были найдены.
+        const passages = disjointRoutes(createWorld(level).level);
+        const ways = new Map();
+        const add = (r, who) => {
+            const key = wayOf(r, passages);
+            const seen = ways.get(key) ?? { who: new Set(), t: r.t, bare: !techniques(r.w).length };
+            seen.who.add(who);
+            seen.t = Math.min(seen.t, r.t);
+            ways.set(key, seen);
+        };
+
+        let reached = 0;
+        let attempts = 0;
         for (const way of WAYS) {
             const tries = [20260830, 7771, 424242].map((seed) =>
                 run({ level, kind: 'в тени', caps: way.caps, seed, limit: 120 }));
             const won = tries.filter((r) => r.done === 'win');
             const clean = won.filter((r) => r.spottedAt === null);
+            attempts += tries.length;
+            reached += won.length;
+            for (const r of won) add(r, 'замысел');
             const best = won[0];
-            const used = tries.reduce((n, r) => n + r.w.stats.coins + r.w.stats.downed + r.w.stats.killed, 0);
-            const path = best ? best.zonePath.join(' → ') : '';
-            if (best) {
-                const seen = routes.get(path) ?? [];
-                seen.push(way.name);
-                routes.set(path, seen);
-            }
             console.log(
                 `  ${way.name.padEnd(11)} дошёл ${won.length}/3` +
                 `  незамеченным ${clean.length}/3` +
-                `  умения применены ${used} раз` +
-                (best ? `  ${best.t.toFixed(1)} с  ${path}` : '  —'),
+                (best ? `  ${best.t.toFixed(1)} с  ${wayOf(best, passages)}` : '  —'),
             );
         }
-        const built = createWorld(level);
-        console.log(`  → дорог по карте: ${routeCount(built.level)}` +
-            `, различимых прогонами: ${routes.size}`);
-        for (const [path, ways] of routes) console.log(`     ${ways.join(', ')}: ${path}`);
+
+        // Бродяга ищет то, чего никто не закладывал.
+        let roamWon = 0;
+        const before = new Set(ways.keys());
+        for (let seed = 101; seed <= 125; seed += 1) {
+            const r = wander({ level, seed, limit: 70 });
+            attempts += 1;
+            if (r.done !== 'win') continue;
+            roamWon += 1;
+            reached += 1;
+            add(r, 'бродяга');
+        }
+        const found = [...ways.keys()].filter((k) => !before.has(k));
+        console.log(`  бродяга    дошёл ${roamWon}/25` +
+            (found.length ? `  и нашёл ${found.length}, чего не искали` : '  ничего нового'));
+
+        // Первой строкой отчёта — состояние измерителя: сколько прогонов
+        // вообще дошло до предмета замера. Не дошло больше трети — число
+        // описывает дорогу, а не уровень.
+        const share = Math.round((reached / attempts) * 100);
+        const bare = [...ways.values()].filter((v) => v.bare).length;
+        console.log(`  → дошло ${reached}/${attempts} (${share}%)` +
+            (share < 66 ? ' ← мало, число ниже описывает бота, а не уровень' : '') +
+            `; способов ${ways.size}, из них голыми руками ${bare}` +
+            `; проходов по карте ${passages.length}`);
+        for (const [key, v] of ways) console.log(`     ${[...v.who].join('+')}: ${key}`);
     }
     process.exit(0);
 }

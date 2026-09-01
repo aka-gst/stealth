@@ -50,7 +50,7 @@ export function createWorld(def) {
         time: 0,
         done: null,
         doneT: 0,
-        stats: { killed: 0, downed: 0, stowed: 0, shots: 0, coins: 0 },
+        stats: { killed: 0, downed: 0, stowed: 0, shots: 0, coins: 0, knocks: 0, switches: 0, boxed: 0 },
         hint: '',
         hintT: 0,
     };
@@ -157,6 +157,7 @@ export function knock(w) {
     const y = p.y + Math.sin(p.angle) * 18;
     if (!solidAt(w.level, x, y)) return false;
     emitNoise(w, x, y, NOISE.knock, 'knock');
+    w.stats.knocks += 1;
     say(w, 'Тук-тук.', 1.2);
     return true;
 }
@@ -178,6 +179,7 @@ export function flipSwitch(w) {
     }
     sw.out = LIGHT.relight;
     emitNoise(w, p.x, p.y, NOISE.switchClack, 'switch');
+    w.stats.switches += 1;
     w.events.push({ kind: 'switch' });
     say(w, hit ? `Свет погас на ${LIGHT.relight} секунд.` : 'Щёлк. Здесь и так темно.', 2);
     return true;
@@ -187,6 +189,7 @@ export function flipSwitch(w) {
 export function toggleBox(w) {
     if (w.player.dead || w.player.dragging || !w.rules.box) return false;
     w.box = !w.box;
+    if (w.box) w.stats.boxed += 1;
     w.events.push({ kind: 'box' });
     say(w, w.box ? 'Под коробкой. Стой — и ты просто ящик.' : 'Вылез.', 2);
     return true;
