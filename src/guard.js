@@ -106,10 +106,22 @@ export function hearNoise(g, x, y, radius) {
     return fresh;
 }
 
-/** Увидел тело. Знает, что чужой есть; где — не знает. */
-export function noticeBody(g, body, alarm) {
+/**
+ * Увидел тело. Знает, что чужой есть; где — не знает.
+ *
+ * Оглушённого он не просто заметит, а пойдёт поднимать: сам тот не встанет
+ * никогда. Труп поднимать некому — с ним он просто поднимает тревогу.
+ */
+export function noticeBody(g, body, alarm, scale = 1) {
     if (isOut(g) || g.state === 'chase') return false;
-    disturb(alarm, body.x, body.y);
+    disturb(alarm, body.x, body.y, scale);
+    // Отсчёт заводится один раз на тело: обход тел идёт каждые 0.2 с, и
+    // без этой проверки он сбрасывал бы таймер, который сам же запустил, —
+    // страж вечно склонялся бы над телом и никогда его не поднимал.
+    if (!body.dead && !body.stowed && g.reviving !== body) {
+        g.reviving = body;
+        g.reviveT = GUARD.reviveTime;
+    }
     g.state = 'suspect';
     g.suspect = { x: body.x, y: body.y };
     g.suspectT = NOISE.investigate;
@@ -120,10 +132,7 @@ export function noticeBody(g, body, alarm) {
 
 export function knockOut(g, lethal) {
     if (lethal) g.dead = true;
-    else {
-        g.down = true;
-        g.wake = GUARD.wakeTime;
-    }
+    else g.down = true;
     g.vx = 0;
     g.vy = 0;
     g.state = lethal ? 'dead' : 'down';
@@ -177,25 +186,9 @@ export function updateGuard(g, ctx, dt) {
     if (g.sayT <= 0) g.say = '';
     g.shootCd = Math.max(0, g.shootCd - dt);
 
-    if (g.down) {
-        // Спрятанный не очнётся: спрятать тело — значит решить задачу
-        // совсем, а не отложить её.
-        if (g.stowed || ctx.rules?.wake === false) return;
-        // Оглушённый приходит в себя — и, если его не спрятали, поднимает
-        // тревогу. Оглушить и бросить посреди двора значит отложить провал,
-        // а не отменить его.
-        g.wake -= dt;
-        if (g.wake <= 0) {
-            g.down = false;
-            g.state = 'suspect';
-            g.suspect = { x: g.x, y: g.y };
-            g.suspectT = NOISE.investigate;
-            disturb(ctx.alarm, g.x, g.y);
-            mark(g, '!', 2);
-            bark(g, 'Меня вырубили!', 2.4);
-        }
-        return;
-    }
+    // Оглушённый сам не встаёт никогда. Его поднимают другие — и только
+    // если найдут: спрятанное тело не находит никто.
+    if (g.down) return;
 
     const { level, alarm, player } = ctx;
     const rules = ctx.rules ?? {};
@@ -293,6 +286,23 @@ export function updateGuard(g, ctx, dt) {
             if (arrived) {
                 if (!g.arrivedAt) { g.arrivedAt = true; g.baseAngle = g.angle; g.lookPhase = 0; }
                 wantAngle = sweep(g, dt);
+
+                // Дошёл до оглушённого — приводит его в чувство.
+                const body = g.reviving;
+                if (body && body.down && !body.stowed
+                    && Math.hypot(body.x - g.x, body.y - g.y) < 40) {
+                    g.reviveT -= dt;
+                    if (g.reviveT <= 0) {
+                        body.down = false;
+                        body.state = 'suspect';
+                        body.suspect = { x: body.x, y: body.y };
+                        body.suspectT = NOISE.investigate;
+                        g.reviving = null;
+                        bark(g, 'Вставай!', 2);
+                        bark(body, 'Меня вырубили!', 2.4);
+                        mark(body, '!', 2);
+                    }
+                } else if (body && (!body.down || body.stowed)) g.reviving = null;
             }
             if (g.suspectT <= 0) {
                 g.state = alarm.state === SEARCH ? 'search' : 'patrol';

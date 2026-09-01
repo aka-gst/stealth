@@ -418,7 +418,7 @@ function checkBodies(w, dt) {
             if (b === g || !isOut(b) || b.stowed) continue;
             const target = { x: b.x, y: b.y, lit: litAt(w, b.x, b.y), grass: hidesAt(w.level, b.x, b.y) };
             if (canSee(w.level, g, target, mul)) {
-                noticeBody(g, b, w.alarm);
+                noticeBody(g, b, w.alarm, w.rules.alarmScale);
                 break;
             }
         }
