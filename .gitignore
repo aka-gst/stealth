@@ -1,4 +1,5 @@
 node_modules/
+trash/
 .DS_Store
 CLAUDE.md
 TODO.md
