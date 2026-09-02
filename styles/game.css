@@ -75,6 +75,16 @@ body {
 #keys { max-width: 820px; text-align: center; color: #6d7688; margin: 0; }
 #keys b { color: #9fb0c8; font-weight: 600; }
 
+/* Съёмочный адрес показывает только мир: ни ссылки, ни клавиш, ни пальцев. */
+body.capture { padding: 0; gap: 0; }
+body.capture #topbar,
+body.capture #controls,
+body.capture #keys { display: none !important; }
+body.capture #stage {
+    aspect-ratio: 16 / 9;
+    max-height: 100svh;
+}
+
 /* Пальцевое управление показывается только там, где пальцем и играют. */
 #controls { display: none; }
 

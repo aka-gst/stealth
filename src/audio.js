@@ -67,7 +67,17 @@ export function wantsQuiet(raw = '') {
     return /(^|[?&#])(тихо|quiet|mute)(&|=|#|$)/.test(text);
 }
 
-export function createAudio() {
+export function createAudio({ disabled = false } = {}) {
+    // Съёмочный адрес не должен даже создавать контекст: muted после ensure
+    // слишком поздно — браузер уже получил пользовательскую активацию.
+    if (disabled) return {
+        ensure() { return null; },
+        play() {},
+        level() { return 0; },
+        update() {},
+        toggle() { return true; },
+        get muted() { return true; },
+    };
     let ctx = null;
     let master = null;
     let meter = null;

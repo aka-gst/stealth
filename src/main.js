@@ -16,11 +16,13 @@ import { createRenderer, draw, drawEpilogue } from './render.js';
 import { createInput } from './input.js';
 import { createAudio, wantsQuiet } from './audio.js';
 import { pulse } from './pulse.js';
+import { isShotURL, startShot } from './capture.js';
 
 const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
-const audio = createAudio();
+const capture = isShotURL(location.search);
+const audio = createAudio({ disabled: capture });
 
 /*
  * ?тихо — открыться немым.
@@ -36,8 +38,10 @@ const audio = createAudio();
 if (wantsQuiet(location.search + location.hash)) audio.toggle();
 
 // Браузер не даёт звучать до первого касания — заводим на первом же.
-for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
-    window.addEventListener(evt, () => audio.ensure(), { once: true });
+if (!capture) {
+    for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
+        window.addEventListener(evt, () => audio.ensure(), { once: true });
+    }
 }
 
 /*
@@ -91,12 +95,13 @@ function saveIndex(i) {
     try { localStorage.setItem(SAVE, String(i)); } catch { /* приватный режим — не беда */ }
 }
 
-let index = loadIndex();
+let index = capture ? 0 : loadIndex();
 let world = start(index);
+let captureFrozen = false;
 
 function start(i) {
     index = Math.max(0, Math.min(LEVELS.length - 1, i));
-    saveIndex(index);
+    if (!capture) saveIndex(index);
     const level = LEVELS[index];
     const w = createWorld(level);
     // Подсказка по клавишам своя у каждого уровня: перечислять всё сразу
@@ -108,7 +113,7 @@ function start(i) {
     w.levelTotal = LEVELS.length;
     w.last = index === LEVELS.length - 1;
     say(w, level.brief, 6);
-    pulse.roomStarted(index, level.name);
+    if (!capture) pulse.roomStarted(index, level.name);
     return w;
 }
 
@@ -118,7 +123,7 @@ function start(i) {
  * проверять числами надёжнее — и потому, что в скрытой вкладке экранного
  * кадра просто нет.
  */
-if (location.search.includes('debug')) {
+if (location.search.includes('debug') || capture) {
     window.perimetr = {
         world: () => world,
 
@@ -267,6 +272,22 @@ if (location.search.includes('debug')) {
     };
 }
 
+/*
+ * После полного создания мира ставим публичную сцену, доводим её до
+ * содержательного кадра и останавливаем только симуляцию. Отрисовка живёт,
+ * поэтому холст не очищается и остаётся одинаковым сколько угодно долго.
+ */
+startShot({
+    search: location.search,
+    hideHud: () => document.body.classList.add('capture'),
+    freezeInput: () => { captureFrozen = true; },
+    scene: (opts) => {
+        window.perimetr.scene(opts);
+        for (let i = 0; i < 90; i += 1) window.perimetr.sceneStep(1 / 60);
+        window.perimetr.render();
+    },
+});
+
 function resize() {
     const rect = canvas.getBoundingClientRect();
     fitView(rect.width, rect.height);
@@ -301,6 +322,12 @@ let acc = 0;
 function loop(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+
+    if (captureFrozen) {
+        draw(renderer, world, 0);
+        requestAnimationFrame(loop);
+        return;
+    }
 
     if (epilogue) {
         const done = input.frame(dt, null, VIEW);

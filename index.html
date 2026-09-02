@@ -9,7 +9,15 @@
   без кук, без профилей. Ставится в момент создания страницы, иначе игра
   живёт, а знать, играет ли в неё кто-нибудь, нельзя.
 -->
-<script defer src="/pulse/script.js" data-website-id="de024048-c4c3-4639-bbdf-808c558f6d71"></script>
+<script>
+if (new URLSearchParams(location.search).get('кадр') !== '1') {
+    const pulse = document.createElement('script');
+    pulse.defer = true;
+    pulse.src = '/pulse/script.js';
+    pulse.dataset.websiteId = 'de024048-c4c3-4639-bbdf-808c558f6d71';
+    document.head.append(pulse);
+}
+</script>
 <link rel="stylesheet" href="./styles/game.css">
 </head>
 <body>

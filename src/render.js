@@ -46,16 +46,21 @@ const COL = {
 };
 
 const MOOD_CONE = {
-    calm: 'rgba(120, 175, 255, 0.20)',
-    suspect: 'rgba(255, 196, 60, 0.26)',
-    alert: 'rgba(255, 70, 70, 0.30)',
+    calm: 'rgba(120, 175, 255, 0.045)',
+    suspect: 'rgba(255, 196, 60, 0.065)',
+    alert: 'rgba(255, 70, 70, 0.09)',
 };
 
 const MOOD_EDGE = {
-    calm: 'rgba(150, 190, 255, 0.30)',
-    suspect: 'rgba(255, 206, 92, 0.45)',
-    alert: 'rgba(255, 86, 86, 0.55)',
+    calm: 'rgba(150, 190, 255, 0.10)',
+    suspect: 'rgba(255, 206, 92, 0.14)',
+    alert: 'rgba(255, 86, 86, 0.20)',
 };
+
+// Тьма — визуальная приправа, не чёрная заглушка. При 0.18 тёплый пол,
+// стены и препятствия остаются читаемы даже без единого фонаря.
+export const darknessAlpha = (ambient = 0) => 0.18 * (1 - Math.max(0, Math.min(1, ambient)));
+export const EXIT_OUTLINE = '#d8ff80';
 
 export function createRenderer(canvas) {
     const ctx = canvas.getContext('2d');
@@ -152,6 +157,7 @@ export function draw(r, world, dt = 1 / 60) {
     drawDarkness(r, world);
 
     worldSpace(r);
+    drawExitOutline(ctx, world);
     drawOutlines(ctx, world, r.cam);
     drawCones(ctx, world);
     drawNoises(ctx, world);
@@ -288,7 +294,7 @@ function drawDarkness(r, world) {
     // Насколько темно, решает уровень. В обучающих комнатах светло: правило,
     // которое ещё не объяснили, не должно вдобавок прятаться в темноте.
     const ambient = world.level.ambient ?? 0;
-    shadeCtx.fillStyle = `rgba(5,7,14,${(0.72 * (1 - ambient)).toFixed(3)})`;
+    shadeCtx.fillStyle = `rgba(25,38,62,${darknessAlpha(ambient).toFixed(3)})`;
     shadeCtx.fillRect(0, 0, VIEW.w, VIEW.h);
 
     shadeCtx.save();
@@ -364,6 +370,17 @@ function drawDarkness(r, world) {
         ctx.stroke();
         ctx.setLineDash([]);
     }
+    ctx.restore();
+}
+
+/** Выход остаётся адресом даже в полной тьме: механика света от этого не меняется. */
+function drawExitOutline(ctx, world) {
+    const { x, y } = world.level.exit;
+    ctx.save();
+    ctx.strokeStyle = EXIT_OUTLINE;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x - TILE / 2 + 1, y - TILE / 2 + 1, TILE - 2, TILE - 2);
     ctx.restore();
 }
 
