@@ -47,15 +47,40 @@ test('снятие отменяет бой, а не выигрывает его:
     assert.equal(world.alarm.state, 'calm');
 });
 
-test('оглушённый очнётся и поднимет поиск, если его не спрятать', () => {
+test('оглушённый сам не встаёт никогда', () => {
+    // Решение автора: «или сразу вырубать чтобы он не очнулся без помощи
+    // других лучше». Цена нелетального пути переезжает из «успей связать»
+    // в «спрячь, иначе найдут», и прятать тела становится тем, ради чего
+    // это делают, а не вежливостью.
     const world = createWorld(def());
     stand(world, -1);
     tryTakedown(world, false);
     world.player.x = px(2);
 
-    for (let i = 0; i < (GUARD.wakeTime + 1) * 60; i += 1) updateWorld(world, idle, 1 / 60);
-    assert.equal(world.guards[0].down, false, 'очнулся');
-    assert.equal(world.alarm.state, SEARCH, 'и поднял тревогу');
+    for (let i = 0; i < 300 * 60; i += 1) updateWorld(world, idle, 1 / 60);
+    assert.equal(world.guards[0].down, true, 'пять минут спустя всё ещё лежит');
+    assert.equal(world.alarm.state, 'calm', 'и тревоги сам не поднял');
+});
+
+test('но его поднимают другие, если найдут', () => {
+    const world = createWorld(def({
+        guards: [
+            { at: { x: 15, y: 7 }, angle: 0, route: [{ x: 15, y: 7, wait: 99 }] },
+            { at: { x: 10, y: 7 }, angle: 0, route: [{ x: 10, y: 7, wait: 99 }] },
+        ],
+    }));
+    stand(world, -1);
+    tryTakedown(world, false);
+    world.player.x = px(2);
+    world.player.y = px(12);
+
+    let поднят = false;
+    for (let t = 0; t < 30; t += 1 / 60) {
+        updateWorld(world, idle, 1 / 60);
+        if (!world.guards[0].down) { поднят = true; break; }
+    }
+    assert.equal(поднят, true, 'сосед дошёл и привёл в чувство');
+    assert.notEqual(world.alarm.state, 'calm', 'и объект об этом знает');
 });
 
 test('спрятанное тело не находят и оно не очнётся', () => {
@@ -74,8 +99,8 @@ test('спрятанное тело не находят и оно не очнё�
     assert.equal(toggleCarry(world), true, 'бросил');
     assert.equal(world.guards[0].stowed, true, 'у ящика — значит спрятано');
 
-    for (let i = 0; i < (GUARD.wakeTime + 2) * 60; i += 1) updateWorld(world, idle, 1 / 60);
-    assert.equal(world.guards[0].down, true, 'так и не очнулся');
+    for (let i = 0; i < 120 * 60; i += 1) updateWorld(world, idle, 1 / 60);
+    assert.equal(world.guards[0].down, true, 'спрятанного не найдут и не поднимут');
     assert.equal(world.alarm.state, 'calm');
 });
 

@@ -57,5 +57,5 @@ server.on('error', (err) => {
     port += 1;
     server.listen(port);
 });
-server.on('listening', () => console.log(`ПЕРИМЕТР: http://localhost:${port}/`));
+server.on('listening', () => console.log(`МГС: http://localhost:${port}/`));
 server.listen(port);

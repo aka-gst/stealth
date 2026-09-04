@@ -10,33 +10,38 @@ import { STEP, VIEW, fitView } from './tuning.js';
 import { LEVELS } from './levels.js';
 import {
     createWorld, updateWorld, useAction, tryTakedown, toggleBox,
-    throwCoin, firePistol, say, fatesOf,
+    throwCoin, firePistol, say, fatesOf, rankOf,
 } from './world.js';
 import { createRenderer, draw, drawEpilogue } from './render.js';
 import { createInput } from './input.js';
-import { createAudio } from './audio.js';
+import { createAudio, wantsQuiet } from './audio.js';
+import { pulse } from './pulse.js';
+import { isShotURL, startShot } from './capture.js';
 
 const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
-const audio = createAudio();
+const capture = isShotURL(location.search);
+const audio = createAudio({ disabled: capture });
 
 /*
- * Щипок на тачпаде браузер понимает как «увеличить страницу», и игра
- * уезжает из кадра. Для игры это всегда промах пальцем, а не намерение,
- * поэтому масштабирование страницы запрещаем целиком.
+ * ?тихо — открыться немым.
+ *
+ * Общее соглашение для всех игр набора: обходчики и снимающие не должны
+ * слышать музыку на чужих колонках, а глушить снаружи ненадёжно —
+ * звуковые контексты оживают при переразмере окна и возврате во вкладку.
+ * Пусть игра умеет молчать по адресу.
+ *
+ * Сам разбор живёт в audio.js чистой функцией: его надо уметь проверить
+ * из узла, иначе ошибка в нём проживёт при зелёных наборах.
  */
-window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
-for (const evt of ['gesturestart', 'gesturechange', 'gestureend']) {
-    window.addEventListener(evt, (e) => e.preventDefault());
-}
-window.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && ['Equal', 'Minus', 'Digit0'].includes(e.code)) e.preventDefault();
-});
+if (wantsQuiet(location.search + location.hash)) audio.toggle();
 
 // Браузер не даёт звучать до первого касания — заводим на первом же.
-for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
-    window.addEventListener(evt, () => audio.ensure(), { once: true });
+if (!capture) {
+    for (const evt of ['keydown', 'pointerdown', 'touchstart']) {
+        window.addEventListener(evt, () => audio.ensure(), { once: true });
+    }
 }
 
 /*
@@ -76,6 +81,8 @@ function epilogueData() {
 }
 
 let epilogue = null;
+/** Шаг поставленной сцены для витрины. null — сцена не запущена. */
+let scenePlay = null;
 
 function loadIndex() {
     try {
@@ -88,12 +95,13 @@ function saveIndex(i) {
     try { localStorage.setItem(SAVE, String(i)); } catch { /* приватный режим — не беда */ }
 }
 
-let index = loadIndex();
+let index = capture ? 0 : loadIndex();
 let world = start(index);
+let captureFrozen = false;
 
 function start(i) {
     index = Math.max(0, Math.min(LEVELS.length - 1, i));
-    saveIndex(index);
+    if (!capture) saveIndex(index);
     const level = LEVELS[index];
     const w = createWorld(level);
     // Подсказка по клавишам своя у каждого уровня: перечислять всё сразу
@@ -105,6 +113,7 @@ function start(i) {
     w.levelTotal = LEVELS.length;
     w.last = index === LEVELS.length - 1;
     say(w, level.brief, 6);
+    if (!capture) pulse.roomStarted(index, level.name);
     return w;
 }
 
@@ -114,9 +123,43 @@ function start(i) {
  * проверять числами надёжнее — и потому, что в скрытой вкладке экранного
  * кадра просто нет.
  */
-if (location.search.includes('debug')) {
+if (location.search.includes('debug') || capture) {
     window.perimetr = {
         world: () => world,
+
+        /**
+         * Часы мира: сколько игровых секунд прошло.
+         *
+         * Вынесено отдельным вызовом, потому что за ним пришли снаружи и не
+         * нашли: поле `time` в мире лежало всегда, но чужая сессия искала
+         * `state().t` — по моему же описанию, данному по памяти. Отдельное
+         * имя дешевле, чем объяснять, где искать.
+         *
+         * Нужно оно вот для чего. Игровой цикл зажимает шаг:
+         * `dt = Math.min(0.1, …)`. Значит при частоте ниже десяти кадров
+         * игра идёт медленнее настоящего времени, и всё, что считается
+         * секундами — патрули, поворот конуса, спад тревоги, — едет разом.
+         * Померить это можно только снаружи: взять `time()`, подождать
+         * настоящую секунду, взять снова. Отношение и есть ответ.
+         */
+        time: () => world.time,
+
+        /**
+         * Что этот пульт умеет и что возвращает.
+         *
+         * Заведено по замечанию соседней сессии, и замечание было про меня:
+         * я описал пульт по памяти, назвал несуществующий `state()`, и
+         * человек полчаса искал то, чего нет. Пульт, который не может
+         * рассказать о себе, описывают по замыслу — а проверяют только
+         * когда за него дёрнут.
+         */
+        keys: () => ({
+            вызовы: Object.keys(window.perimetr),
+            мир: Object.keys(world),
+            игрок: Object.keys(world.player),
+            страж: world.guards[0] ? Object.keys(world.guards[0]) : [],
+            тревога: Object.keys(world.alarm),
+        }),
         step(seconds, over = {}) {
             const frame = { ax: 0, ay: 0, creep: false, run: false, aimAngle: null, ...over };
             for (let t = 0; t < seconds; t += STEP) updateWorld(world, frame, STEP);
@@ -124,6 +167,100 @@ if (location.search.includes('debug')) {
         },
         level: (i) => { world = start(i); return world; },
         epilogue: () => { epilogue = epilogueData(); return epilogue; },
+        audio: () => audio,
+
+        /*
+         * Поставленная сцена для витрины: тёмная комната, страж спиной,
+         * герой подходит крадучись и снимает его.
+         *
+         * Игра даёт снаряд, снимает им кто угодно. Отдавать видеофайл было
+         * бы хуже: он устареет на первой же правке света, а вызов всегда
+         * покажет то, что в игре есть сегодня.
+         *
+         *   perimetr.scene();                     // поставить, вернёт длину
+         *   perimetr.sceneStep(1 / 60);           // шаг, вернёт время
+         *   perimetr.render();                    // и кадр
+         */
+        scene(opts = {}) {
+            world = start(4);
+            renderer.focus = null;
+            world.hint = '';
+            world.hintT = 0;
+
+            const at = (tx, ty) => ({ x: (tx + 0.5) * 24, y: (ty + 0.5) * 24 });
+            // Страж стоит в пятне фонаря, герой выходит на него из темноты
+            // снизу. И свет, и темнота, и то, что в ней происходит, попадают
+            // в один кадр — иначе сцена не про темноту, а про две фигурки.
+            const post = at(8, 6);
+            const g = world.guards[0];
+            Object.assign(g, { x: post.x, y: post.y, angle: -Math.PI / 2, state: 'patrol', waitLeft: 999 });
+            g.route = [{ ...post, wait: 999, look: false }];
+            g.routeIndex = 0;
+            g.lines = [];
+
+            // Страж стоит в пятне фонаря, герой заходит из темноты: и то и
+            // другое видно в кадре, иначе сцена не про свет, а про фигурки.
+            const start0 = at(8, 10);
+
+            /*
+             * Тёмный вариант: фонарь над стражем гаснет. Так честнее по
+             * букве замысла — «в тёмной комнате», — но видно заметно хуже:
+             * страж рисуется поверх темноты и остаётся фигурой, а герой в
+             * тени тускнеет, и действие приходится угадывать. Решать, что
+             * важнее, должен автор, и для этого ему нужны оба кадра.
+             */
+            if (opts.dark) {
+                const lamp = world.lights[0];
+                lamp.out = 999;
+                lamp.shape = null;
+            }
+            Object.assign(world.player, { x: start0.x, y: start0.y, angle: 0, vx: 0, vy: 0 });
+
+            /*
+             * Крупный план. На карточке витрины полоса высотой 287 пикселей,
+             * и страж ростом в четырнадцать пикселей холста доезжает до
+             * зрителя четырьмя. Обзор комнаты там не нужен — нужен человек,
+             * который подходит сзади, и он должен занимать треть кадра.
+             *
+             * Заодно это снимает спор про темноту: две серые фигурки в
+             * чёрном поле — беда общего плана. Крупным планом фигуру видно
+             * и в полумраке.
+             */
+            const zoom = opts.close ? (opts.scale ?? 3.2) : 0;
+
+            let t = 0;
+            let struck = false;
+            scenePlay = (dt) => {
+                t += dt;
+                const dx = g.x - world.player.x;
+                const dy = g.y - world.player.y;
+                const d = Math.hypot(dx, dy) || 1;
+                const walking = !struck && t < 2.2;
+                updateWorld(world, {
+                    ax: walking ? dx / d : 0,
+                    ay: walking ? dy / d : 0,
+                    creep: true,
+                    run: false,
+                    aimAngle: null,
+                }, dt);
+                // Бить раньше, чем страж нащупает: дистанция снятия 32,
+                // «чувствует вплотную» — 26 на полном свету. Окно узкое,
+                // и сцена обязана попадать в него, а не в его край.
+                if (!struck && d < 30) struck = tryTakedown(world, false);
+                world.hint = '';
+                if (zoom) {
+                    renderer.focus = {
+                        x: (world.player.x + g.x) / 2,
+                        y: (world.player.y + g.y) / 2,
+                        scale: zoom,
+                    };
+                }
+                return t;
+            };
+            return { length: 2.8, level: world.levelName, close: Boolean(zoom) };
+        },
+
+        sceneStep(dt = 1 / 60) { return scenePlay ? scenePlay(dt) : 0; },
         fates: () => loadFates(),
         act: (lethal = false) => tryTakedown(world, lethal),
         use: () => useAction(world),
@@ -135,6 +272,22 @@ if (location.search.includes('debug')) {
     };
 }
 
+/*
+ * После полного создания мира ставим публичную сцену, доводим её до
+ * содержательного кадра и останавливаем только симуляцию. Отрисовка живёт,
+ * поэтому холст не очищается и остаётся одинаковым сколько угодно долго.
+ */
+startShot({
+    search: location.search,
+    hideHud: () => document.body.classList.add('capture'),
+    freezeInput: () => { captureFrozen = true; },
+    scene: (opts) => {
+        window.perimetr.scene(opts);
+        for (let i = 0; i < 90; i += 1) window.perimetr.sceneStep(1 / 60);
+        window.perimetr.render();
+    },
+});
+
 function resize() {
     const rect = canvas.getBoundingClientRect();
     fitView(rect.width, rect.height);
@@ -145,6 +298,16 @@ function resize() {
     // пикселях кадра. Иначе на ретине игра рисуется в четверть холста.
     renderer.dpr = dpr;
     renderer.ctx.imageSmoothingEnabled = false;
+
+    /*
+     * Кадр рисуется сразу, не дожидаясь requestAnimationFrame.
+     *
+     * В скрытой или фоновой вкладке rAF не тикает вовсе, и снимок экрана
+     * получается пустым холстом — именно так витрина сайта четыре раза
+     * подряд сняла чёрный прямоугольник. Один синхронный кадр стоит доли
+     * миллисекунды и снимает весь класс этих проблем.
+     */
+    if (world) draw(renderer, world, 0);
 }
 
 window.addEventListener('resize', resize);
@@ -159,6 +322,12 @@ let acc = 0;
 function loop(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+
+    if (captureFrozen) {
+        draw(renderer, world, 0);
+        requestAnimationFrame(loop);
+        return;
+    }
 
     if (epilogue) {
         const done = input.frame(dt, null, VIEW);
@@ -183,18 +352,26 @@ function loop(now) {
     };
     const frame = input.frame(dt, cam, VIEW);
 
-    if (frame.restart) world = start(index);
+    if (frame.restart) { renderer.focus = null; world = start(index); }
     if (frame.next) world = start(index + 1);
     if (frame.prev) world = start(index - 1);
     if (frame.reset) world = start(0);
 
     // Уровень сдан — дальше по кнопке, а не сам собой: итог надо прочитать.
-    if (world.done === 'win' && !world.recorded) {
+    if (world.done && !world.recorded) {
         world.recorded = true;
-        recordFates(world);
+        if (world.done === 'win') {
+            recordFates(world);
+            pulse.roomDone(index, world.levelName, world.time, rankOf(world).rank);
+        } else {
+            pulse.roomFailed(index, world.levelName, world.time);
+        }
     }
     if (world.done === 'win' && world.doneT > 0.6 && (frame.action || frame.fire)) {
-        if (world.last) epilogue = epilogueData();
+        if (world.last) {
+            epilogue = epilogueData();
+            pulse.escaped(epilogue.killed.length, epilogue.downed, epilogue.spared);
+        }
         else world = start(index + 1);
     }
     if (world.done === 'lose' && world.doneT > 0.6 && (frame.action || frame.fire)) {

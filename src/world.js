@@ -37,6 +37,7 @@ export function createWorld(def) {
         switches: level.switches.map((sw) => ({ ...sw, out: 0 })),
         /** Коробка одна на уровень и никуда не девается. */
         box: false,
+        lastPose: 'stand',
         ammo: rules.ammo ?? PISTOL.ammo,
         fireCd: 0,
         bodyCheck: 0,
@@ -49,7 +50,7 @@ export function createWorld(def) {
         time: 0,
         done: null,
         doneT: 0,
-        stats: { killed: 0, downed: 0, stowed: 0, shots: 0, coins: 0 },
+        stats: { killed: 0, downed: 0, stowed: 0, shots: 0, coins: 0, knocks: 0, switches: 0, boxed: 0 },
         hint: '',
         hintT: 0,
     };
@@ -82,7 +83,7 @@ export function emitNoise(w, x, y, radius, kind = 'step') {
     w.events.push({ kind, x, y, radius });
     for (const g of w.guards) hearNoise(g, x, y, radius);
     // Выстрел слышит весь объект и понимает, что чужой внутри.
-    if (kind === 'shot') disturb(w.alarm, x, y);
+    if (kind === 'shot') disturb(w.alarm, x, y, w.rules.alarmScale);
 }
 
 const litAt = (w, x, y) => illumination(w.level, w.lights, x, y);
@@ -122,7 +123,11 @@ function stepFeet(w, dt) {
 export function tryTakedown(w, lethal) {
     const p = w.player;
     if (p.dead || p.dragging) return false;
-    if (p.pose === 'prone') { say(w, 'С земли не снять — встань.', 1.4); return false; }
+    if (p.pose === 'prone') {
+        w.events.push({ kind: 'deny' });
+        say(w, 'С земли не снять — встань.', 1.4);
+        return false;
+    }
 
     let best = null;
     let bestD = PLAYER.reach;
@@ -152,6 +157,7 @@ export function knock(w) {
     const y = p.y + Math.sin(p.angle) * 18;
     if (!solidAt(w.level, x, y)) return false;
     emitNoise(w, x, y, NOISE.knock, 'knock');
+    w.stats.knocks += 1;
     say(w, 'Тук-тук.', 1.2);
     return true;
 }
@@ -173,6 +179,7 @@ export function flipSwitch(w) {
     }
     sw.out = LIGHT.relight;
     emitNoise(w, p.x, p.y, NOISE.switchClack, 'switch');
+    w.stats.switches += 1;
     w.events.push({ kind: 'switch' });
     say(w, hit ? `Свет погас на ${LIGHT.relight} секунд.` : 'Щёлк. Здесь и так темно.', 2);
     return true;
@@ -182,6 +189,8 @@ export function flipSwitch(w) {
 export function toggleBox(w) {
     if (w.player.dead || w.player.dragging || !w.rules.box) return false;
     w.box = !w.box;
+    if (w.box) w.stats.boxed += 1;
+    w.events.push({ kind: 'box' });
     say(w, w.box ? 'Под коробкой. Стой — и ты просто ящик.' : 'Вылез.', 2);
     return true;
 }
@@ -198,6 +207,7 @@ export function useAction(w) {
     if (toggleCarry(w)) return true;
     if (flipSwitch(w)) return true;
     if (knock(w)) return true;
+    w.events.push({ kind: 'deny' });
     say(w, 'Тут не за что взяться. Заходи со спины или стучи в стену.', 1.8);
     return false;
 }
@@ -241,7 +251,10 @@ export function toggleCarry(w) {
  */
 export function throwCoin(w) {
     const p = w.player;
-    if (p.dead || w.coinsLeft <= 0) return false;
+    if (p.dead || w.coinsLeft <= 0) {
+        if (!p.dead) w.events.push({ kind: 'deny' });
+        return false;
+    }
     w.coinsLeft -= 1;
     w.stats.coins += 1;
     w.coins.push({
@@ -258,7 +271,10 @@ export function throwCoin(w) {
 
 export function firePistol(w) {
     const p = w.player;
-    if (p.dead || w.ammo <= 0 || w.fireCd > 0 || p.dragging) return false;
+    if (p.dead || w.ammo <= 0 || w.fireCd > 0 || p.dragging) {
+        if (!p.dead && w.fireCd <= 0) w.events.push({ kind: 'deny' });
+        return false;
+    }
     w.ammo -= 1;
     w.fireCd = PISTOL.cooldown;
     w.stats.shots += 1;
@@ -405,7 +421,7 @@ function checkBodies(w, dt) {
             if (b === g || !isOut(b) || b.stowed) continue;
             const target = { x: b.x, y: b.y, lit: litAt(w, b.x, b.y), grass: hidesAt(w.level, b.x, b.y) };
             if (canSee(w.level, g, target, mul)) {
-                noticeBody(g, b, w.alarm);
+                noticeBody(g, b, w.alarm, w.rules.alarmScale);
                 break;
             }
         }
@@ -463,6 +479,13 @@ export function updateWorld(w, input, dt) {
     // Коробка прячет только неподвижного и только пока никто не гонится:
     // если тебя уже увидели, все знают, кто там под ящиком.
     p.hidden = w.box && p.speed < 8 && !w.guards.some((g) => g.state === 'chase');
+
+    // Смена позы слышна: лёг, встал, прижался. Игрок должен понимать, что
+    // игра его нажатие засчитала, даже когда на экране меняется немногое.
+    if (p.pose !== w.lastPose) {
+        w.lastPose = p.pose;
+        w.events.push({ kind: 'pose' });
+    }
     if (noise > 0) emitNoise(w, p.x, p.y, noise, 'step');
     stepFeet(w, dt);
 
@@ -507,7 +530,7 @@ export function updateWorld(w, input, dt) {
     if (w.tracks.length && w.tracks[0].life <= 0) w.tracks = w.tracks.filter((t) => t.life > 0);
     stepBullets(w, dt);
     stepCoins(w, dt);
-    updateAlarm(w.alarm, dt);
+    updateAlarm(w.alarm, dt, w.rules.alarmScale);
 
     if (w.alarm.state !== wasAlarm) w.events.push({ kind: `alarm-${w.alarm.state}` });
 

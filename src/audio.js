@@ -10,6 +10,15 @@
  * вышел на гравий, не глядя под ноги.
  */
 
+/**
+ * Настоящие шаги по четырём поверхностям — по шесть вариантов на каждую,
+ * чтобы ходьба не превращалась в метроном. Синтез остаётся запасным
+ * вариантом: если пак не доехал или браузер не смог его раскодировать,
+ * игра обязана звучать всё равно — слух здесь половина жанра.
+ */
+const STEP_PACK = { 1: 'concrete', 1.8: 'gravel', 0.3: 'snow', 0.25: 'grass' };
+const STEP_VARIANTS = 6;
+
 const SURFACE_VOICE = {
     // множитель поверхности -> тембр шага
     1: { freq: 1500, q: 1.1, dur: 0.07, gain: 1 },      // бетон
@@ -18,15 +27,65 @@ const SURFACE_VOICE = {
     0.25: { freq: 900, q: 1.4, dur: 0.09, gain: 0.6 },  // трава
 };
 
+/*
+ * Громкости выставлены по ролям, а не по одной. Ставить их поодиночке —
+ * верный способ получить разброс на порядки: каждая по отдельности кажется
+ * нормальной, а вместе они расходятся так, что половину не слышно.
+ *
+ * Крадущийся шаг тише всех, но слышен: для стражей он ровно ноль, а игрок
+ * обязан понимать, что идёт. Неслышный тихий шаг — это не тишина, это
+ * оборванная обратная связь.
+ */
 const MODE_GAIN = {
-    run: 0.55, walk: 0.38, creep: 0.15, prone: 0.10, hug: 0.13, box: 0.22,
+    run: 0.55, walk: 0.38, creep: 0.24, prone: 0.18, hug: 0.20, box: 0.26,
 };
 
-export function createAudio() {
+/**
+ * Просят ли открыть игру немой. Принимает `location.search + location.hash`.
+ *
+ * Три вещи, каждая из которых уже ломала это в чужих играх:
+ *
+ * Расшифровка обёрнута в try/catch. `decodeURIComponent` бросает URIError
+ * на битом проценте — `?%zz`, — а такие адреса приходят к живому человеку
+ * сами собой: мессенджер обрезал ссылку, автозамена съела символ. Стояла
+ * эта строка на верхнем уровне входного файла, и падение обрывало модуль
+ * целиком: экран при этом выглядит нормальным, а игра мертва.
+ *
+ * Начало `(^|[?&#])` — чтобы ловился и якорь `#тихо`.
+ *
+ * Граница слова `\b` тут не работает вовсе: для регулярного выражения
+ * кириллица не буква, и `?тихо&debug` по ней не совпадает. Разделитель
+ * проверяется явно.
+ *
+ * И главное — это чистая функция в файле, который не трогает документ.
+ * Разбор адреса, который нельзя позвать из узла, живёт при полностью
+ * зелёных наборах: проверять его попросту нечем.
+ */
+export function wantsQuiet(raw = '') {
+    let text = raw;
+    try { text = decodeURIComponent(raw); } catch { /* битый процент — как есть */ }
+    return /(^|[?&#])(тихо|quiet|mute)(&|=|#|$)/.test(text);
+}
+
+export function createAudio({ disabled = false } = {}) {
+    // Съёмочный адрес не должен даже создавать контекст: muted после ensure
+    // слишком поздно — браузер уже получил пользовательскую активацию.
+    if (disabled) return {
+        ensure() { return null; },
+        play() {},
+        level() { return 0; },
+        update() {},
+        toggle() { return true; },
+        get muted() { return true; },
+    };
     let ctx = null;
     let master = null;
+    let meter = null;
     let muted = false;
     let pulse = 0;
+    /** Раскодированные шаги: поверхность -> массив буферов. */
+    const steps = {};
+    let loading = false;
 
     function ensure() {
         if (!ctx) {
@@ -35,10 +94,54 @@ export function createAudio() {
             ctx = new AC();
             master = ctx.createGain();
             master.gain.value = 0.34;
-            master.connect(ctx.destination);
+            /*
+             * Щуп на общем узле. «Контекст запущен» не доказывает ничего:
+             * контекст жив, а до колонок могло не дойти — оборванная цепь,
+             * нулевая громкость, не раскодированный буфер. Проверять надо
+             * выход, и `level()` его показывает.
+             */
+            meter = ctx.createAnalyser();
+            meter.fftSize = 512;
+            master.connect(meter);
+            meter.connect(ctx.destination);
         }
         if (ctx.state === 'suspended') ctx.resume();
+        loadSteps();
         return ctx;
+    }
+
+    /**
+     * Пак грузится один раз и в фоне. Ни один сбой не должен мешать игре:
+     * не доехал файл — просто останется синтез.
+     */
+    function loadSteps() {
+        if (loading || !ctx) return;
+        loading = true;
+        for (const surface of Object.values(STEP_PACK)) {
+            steps[surface] = [];
+            for (let i = 1; i <= STEP_VARIANTS; i += 1) {
+                const url = new URL(`../sfx/step-${surface}-${i}.wav`, import.meta.url).href;
+                fetch(url)
+                    .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+                    .then((buf) => ctx.decodeAudioData(buf))
+                    .then((decoded) => { steps[surface].push(decoded); })
+                    .catch(() => { /* останется синтез */ });
+            }
+        }
+    }
+
+    /** Проиграть готовый шаг. Скорость чуть гуляет, чтобы не было метронома. */
+    function sample(surface, vol) {
+        const bank = steps[surface];
+        if (!bank || !bank.length) return false;
+        const src = ctx.createBufferSource();
+        src.buffer = bank[Math.floor(Math.random() * bank.length)];
+        src.playbackRate.value = 0.92 + Math.random() * 0.16;
+        const gain = ctx.createGain();
+        gain.gain.value = vol;
+        src.connect(gain).connect(master);
+        src.start();
+        return true;
     }
 
     /** Короткий тон с завалом громкости. Из них собрано почти всё. */
@@ -84,8 +187,11 @@ export function createAudio() {
         if (!ctx || muted) return;
         switch (e.kind) {
             case 'foot': {
+                const gain = MODE_GAIN[e.mode] ?? 0.3;
+                const surface = STEP_PACK[e.surface] ?? 'concrete';
+                if (sample(surface, gain * 1.1)) break;
                 const v = SURFACE_VOICE[e.surface] ?? SURFACE_VOICE[1];
-                burst({ freq: v.freq, q: v.q, dur: v.dur, vol: (MODE_GAIN[e.mode] ?? 0.3) * v.gain * 0.5 });
+                burst({ freq: v.freq, q: v.q, dur: v.dur, vol: gain * v.gain * 0.5 });
                 break;
             }
             case 'knock':
@@ -111,7 +217,16 @@ export function createAudio() {
                 tone({ freq: 130, to: 45, dur: 0.24, type: 'square', vol: 0.24 });
                 break;
             case 'shout':
-                burst({ freq: 800, q: 3.2, dur: 0.26, vol: 0.24 });
+                /*
+                 * Крик увидевшего — самый важный звук в игре: он говорит
+                 * игроку, что его заметили, раньше, чем это станет видно.
+                 * Узкий полосовой фильтр съедал у него почти всю энергию —
+                 * замер показал 0.0053 против 0.0863 у выстрела, то есть на
+                 * 24 децибела тише. Голос собран тонами, шум только сверху.
+                 */
+                tone({ freq: 430, to: 300, dur: 0.24, type: 'sawtooth', vol: 0.30 });
+                tone({ freq: 640, to: 455, dur: 0.20, type: 'square', vol: 0.14, delay: 0.02 });
+                burst({ freq: 950, q: 1.1, dur: 0.20, vol: 0.16 });
                 break;
             case 'switch':
                 burst({ freq: 3000, q: 2, dur: 0.035, vol: 0.28 });
@@ -120,6 +235,35 @@ export function createAudio() {
             case 'glass':
                 burst({ freq: 5200, q: 0.7, dur: 0.28, vol: 0.3, type: 'highpass' });
                 tone({ freq: 3400, to: 2100, dur: 0.2, type: 'triangle', vol: 0.10, delay: 0.05 });
+                break;
+            case 'pose':
+                // Лечь, встать, прижаться к стене. Смена позы — действие
+                // игрока, и молчащее действие ощущается как незасчитанное.
+                // Фильтр широкий: узкий съедал у шороха почти всю энергию,
+                // и медиана давала 0.0021 — вчетверо тише крадущегося шага.
+                burst({ freq: 520, q: 0.6, dur: 0.17, vol: 0.30 });
+                break;
+            case 'box':
+                burst({ freq: 240, q: 0.9, dur: 0.19, vol: 0.15 });
+                tone({ freq: 120, to: 90, dur: 0.14, type: 'triangle', vol: 0.08 });
+                break;
+            case 'deny':
+                /*
+                 * Отказ. Нечего взять, некого снять, патроны кончились.
+                 * Тише всего в игре — это не событие мира, а ответ игре:
+                 * «я тебя услышал, но здесь ничего нет». Без него кнопка
+                 * выглядит нажатой и не отвечающей.
+                 *
+                 * Собран тоном, а не шумом: короткий узкополосный шум давал
+                 * медиану 0.0004, то есть тридцать децибел ниже самого
+                 * тихого шага — ровно та же болезнь, что была у крика.
+                 *
+                 * С первой правкой перелетел в другую сторону: отказ стал
+                 * громче крадущегося шага. Целимся на шесть децибел ниже
+                 * него — тише всего в игре, но слышно.
+                 */
+                tone({ freq: 190, to: 130, dur: 0.07, type: 'triangle', vol: 0.075 });
+                burst({ freq: 900, q: 0.7, dur: 0.03, vol: 0.035 });
                 break;
             case 'pickup':
                 tone({ freq: 660, dur: 0.1, type: 'triangle', vol: 0.16 });
@@ -167,9 +311,20 @@ export function createAudio() {
         });
     }
 
+    /** Громкость на выходе прямо сейчас, 0..1. Тишина — это ровно ноль. */
+    function level() {
+        if (!meter) return 0;
+        const buf = new Float32Array(meter.fftSize);
+        meter.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (const v of buf) sum += v * v;
+        return Math.sqrt(sum / buf.length);
+    }
+
     return {
         ensure,
         play,
+        level,
         update,
         toggle() { muted = !muted; return muted; },
         get muted() { return muted; },

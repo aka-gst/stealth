@@ -25,17 +25,17 @@ const COL = {
     // видимой гранью, всё насыщенное. Тьма здесь — приправа отдельных
     // уровней, а не общее состояние: механику, которую ещё не объяснили,
     // нельзя вдобавок прятать в темноте.
-    floor: '#4b4a3c',
-    floorAlt: '#454434',
-    wall: '#6a7180',
-    wallTop: '#8d95a6',
-    wallEdge: '#3c4150',
-    crate: '#8a6636',
-    crateTop: '#ab8149',
-    grass: '#33512c',
-    grassTip: '#5c8a4c',
-    gravel: '#5f584a',
-    gravelDot: '#918872',
+    floor: '#5b5844',
+    floorAlt: '#54523e',
+    wall: '#828b9d',
+    wallTop: '#a8b1c4',
+    wallEdge: '#3a3f4d',
+    crate: '#9a7440',
+    crateTop: '#c09154',
+    grass: '#3a5c31',
+    grassTip: '#6b9c58',
+    gravel: '#6d6552',
+    gravelDot: '#a49a80',
     soft: '#8d97a6',
     softTrack: '#5d6674',
     exit: '#49c46d',
@@ -46,22 +46,41 @@ const COL = {
 };
 
 const MOOD_CONE = {
-    calm: 'rgba(120, 175, 255, 0.20)',
-    suspect: 'rgba(255, 196, 60, 0.26)',
-    alert: 'rgba(255, 70, 70, 0.30)',
+    calm: 'rgba(120, 175, 255, 0.045)',
+    suspect: 'rgba(255, 196, 60, 0.065)',
+    alert: 'rgba(255, 70, 70, 0.09)',
 };
 
 const MOOD_EDGE = {
-    calm: 'rgba(150, 190, 255, 0.30)',
-    suspect: 'rgba(255, 206, 92, 0.45)',
-    alert: 'rgba(255, 86, 86, 0.55)',
+    calm: 'rgba(150, 190, 255, 0.10)',
+    suspect: 'rgba(255, 206, 92, 0.14)',
+    alert: 'rgba(255, 86, 86, 0.20)',
 };
+
+// Тьма — визуальная приправа, не чёрная заглушка. При 0.18 тёплый пол,
+// стены и препятствия остаются читаемы даже без единого фонаря.
+export const darknessAlpha = (ambient = 0) => 0.18 * (1 - Math.max(0, Math.min(1, ambient)));
+export const EXIT_OUTLINE = '#d8ff80';
 
 export function createRenderer(canvas) {
     const ctx = canvas.getContext('2d');
     const shade = document.createElement('canvas');
     const shadeCtx = shade.getContext('2d');
-    return { canvas, ctx, shade, shadeCtx, dpr: 1, cam: { x: 0, y: 0, s: 1 }, zone: null };
+    return {
+        canvas,
+        ctx,
+        shade,
+        shadeCtx,
+        dpr: 1,
+        cam: { x: 0, y: 0, s: 1 },
+        zone: null,
+        /**
+         * Крупный план для витрины: {x, y, scale}. Пока он стоит, камера
+         * не спрашивает комнату и не рисует ничего служебного — в кадре
+         * должен быть человек, а не интерфейс.
+         */
+        focus: null,
+    };
 }
 
 /** Вернуть матрицу к «логический пиксель кадра», не потеряв плотность экрана. */
@@ -84,6 +103,16 @@ const clamp = (lo, v, hi) => Math.min(hi, Math.max(lo, v));
 function camera(r, world, dt) {
     const p = world.player;
     const { level } = world;
+
+    // Крупный план: кадр ставится точкой и масштабом, без комнат и границ.
+    // Планировка тут не нужна вовсе, нужен человек, который подходит сзади.
+    if (r.focus) {
+        r.cam.s = r.focus.scale;
+        r.cam.x = r.focus.x - VIEW.w / (2 * r.cam.s);
+        r.cam.y = r.focus.y - VIEW.h / (2 * r.cam.s);
+        r.zone = { name: '' };
+        return;
+    }
     const zone = zoneAt(level, p.x, p.y)
         ?? { x0: 0, y0: 0, x1: level.pixelW, y1: level.pixelH, name: world.levelName ?? '' };
     r.zone = zone;
@@ -118,7 +147,7 @@ export function draw(r, world, dt = 1 / 60) {
     camera(r, world, dt);
 
     reset(r);
-    ctx.fillStyle = '#14161c';
+    ctx.fillStyle = '#0f1117';
     ctx.fillRect(0, 0, VIEW.w, VIEW.h);
 
     worldSpace(r);
@@ -128,6 +157,7 @@ export function draw(r, world, dt = 1 / 60) {
     drawDarkness(r, world);
 
     worldSpace(r);
+    drawExitOutline(ctx, world);
     drawOutlines(ctx, world, r.cam);
     drawCones(ctx, world);
     drawNoises(ctx, world);
@@ -140,6 +170,8 @@ export function draw(r, world, dt = 1 / 60) {
     drawPlayer(ctx, world);
     drawBullets(ctx, world);
     drawMarks(ctx, world);
+
+    if (r.focus) return;
 
     drawObjective(r, world);
     drawRadar(r, world);
@@ -262,7 +294,7 @@ function drawDarkness(r, world) {
     // Насколько темно, решает уровень. В обучающих комнатах светло: правило,
     // которое ещё не объяснили, не должно вдобавок прятаться в темноте.
     const ambient = world.level.ambient ?? 0;
-    shadeCtx.fillStyle = `rgba(5,7,14,${(0.72 * (1 - ambient)).toFixed(3)})`;
+    shadeCtx.fillStyle = `rgba(25,38,62,${darknessAlpha(ambient).toFixed(3)})`;
     shadeCtx.fillRect(0, 0, VIEW.w, VIEW.h);
 
     shadeCtx.save();
@@ -341,6 +373,17 @@ function drawDarkness(r, world) {
     ctx.restore();
 }
 
+/** Выход остаётся адресом даже в полной тьме: механика света от этого не меняется. */
+function drawExitOutline(ctx, world) {
+    const { x, y } = world.level.exit;
+    ctx.save();
+    ctx.strokeStyle = EXIT_OUTLINE;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x - TILE / 2 + 1, y - TILE / 2 + 1, TILE - 2, TILE - 2);
+    ctx.restore();
+}
+
 /**
  * Контур стен поверх тьмы. Планировку объекта герой знает и без света —
  * он на неё и шёл; неизвестно ему, кто где стоит. Без этих линий тёмная
@@ -349,8 +392,12 @@ function drawDarkness(r, world) {
 function drawOutlines(ctx, world, cam) {
     const { level } = world;
     const { x0, y0, x1, y1 } = tilesInView(cam);
-    ctx.strokeStyle = 'rgba(20,26,40,0.30)';
-    ctx.lineWidth = 1;
+    // Контур стен рисуется поверх тьмы и потому должен спорить с ней, а не
+    // сливаться: на светлом уровне линия тёмная, на тёмном — светлая.
+    // Не видеть стража — это игра; не видеть, где стена, — это дефект.
+    const dark = (world.level.ambient ?? 0) < 0.55;
+    ctx.strokeStyle = dark ? 'rgba(160,185,225,0.34)' : 'rgba(16,20,32,0.42)';
+    ctx.lineWidth = dark ? 1.5 : 1;
     ctx.beginPath();
     for (let ty = y0; ty < Math.min(level.h, y1); ty += 1) {
         for (let tx = x0; tx < Math.min(level.w, x1); tx += 1) {
@@ -813,6 +860,22 @@ function drawHud(r, world) {
     drawBottomHud(r, world);
 }
 
+/** Разбить строку по словам под заданную ширину. Не больше трёх строк. */
+function wrap(ctx, text, width) {
+    const words = text.split(' ');
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+        const next = line ? `${line} ${word}` : word;
+        if (ctx.measureText(next).width > width && line) {
+            lines.push(line);
+            line = word;
+        } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines.slice(0, 3);
+}
+
 /** Нижняя строка: что у тебя есть и что ты сейчас делаешь. */
 function drawBottomHud(r, world) {
     const { ctx } = r;
@@ -839,10 +902,15 @@ function drawBottomHud(r, world) {
     }
 
     if (world.hint) {
+        // Строка переносится по словам: на узком экране она обрезалась с
+        // обеих сторон, и от подсказки оставалось «…верь открыта».
         ctx.textAlign = 'center';
         ctx.font = '11px system-ui, sans-serif';
         ctx.fillStyle = `rgba(230,238,250,${Math.min(1, world.hintT)})`;
-        ctx.fillText(world.hint, VIEW.w / 2, VIEW.h - 34);
+        const lines = wrap(ctx, world.hint, VIEW.w - 32);
+        lines.forEach((line, i) => {
+            ctx.fillText(line, VIEW.w / 2, VIEW.h - 34 - (lines.length - 1 - i) * 13);
+        });
     }
 }
 

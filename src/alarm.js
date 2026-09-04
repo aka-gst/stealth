@@ -55,28 +55,28 @@ export function spotted(alarm, x, y) {
  * Что-то нашли: тело, выстрел, разбитую лампу. Знают, что чужой есть, но
  * не знают, где он.
  */
-export function disturb(alarm, x, y) {
+export function disturb(alarm, x, y, scale = 1) {
     if (alarm.state === ALERT) return;
     alarm.state = SEARCH;
-    alarm.t = ALARM.searchTime;
+    alarm.t = ALARM.searchTime * scale;
     alarm.point = { x, y };
     alarm.everAlarmed = true;
 }
 
-export function updateAlarm(alarm, dt) {
+export function updateAlarm(alarm, dt, scale = 1) {
     switch (alarm.state) {
         case ALERT:
             alarm.grace -= dt;
             if (alarm.grace <= 0) {
                 alarm.state = SEARCH;
-                alarm.t = ALARM.searchTime;
+                alarm.t = ALARM.searchTime * scale;
             }
             break;
         case SEARCH:
             alarm.t -= dt;
             if (alarm.t <= 0) {
                 alarm.state = CAUTION;
-                alarm.t = ALARM.cautionTime;
+                alarm.t = ALARM.cautionTime * scale;
             }
             break;
         case CAUTION:
