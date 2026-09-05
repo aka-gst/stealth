@@ -55,7 +55,7 @@ server.on('error', (err) => {
         process.exit(1);
     }
     port += 1;
-    server.listen(port);
+    server.listen(port, '127.0.0.1');
 });
 server.on('listening', () => console.log(`МГС: http://localhost:${port}/`));
-server.listen(port);
+server.listen(port, '127.0.0.1');
