@@ -683,10 +683,55 @@ function drawBullets(ctx, world) {
     }
 }
 
+/*
+ * Нож в замахе. В игре снятие мгновенное, и удара не видно вовсе; здесь —
+ * минимальная сценическая анимация по просьбе Сергея: лезвие выходит из руки
+ * героя в сторону стража и на последней трети вспыхивает бликом.
+ * `world.нож` — доля замаха от 0 до 1, её ведёт сцена.
+ */
+function drawKnife(ctx, world) {
+    const k = world.нож;
+    if (!k) return;
+    const p = world.player;
+    const g = world.guards.find((x) => !x.down && !x.dead) || world.guards[0];
+    if (!g) return;
+    const a = Math.atan2(g.y - p.y, g.x - p.x);
+    const длина = 10 + 12 * k;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = k > 0.66 ? '#ffffff' : 'rgba(220,228,240,0.8)';
+    ctx.lineWidth = k > 0.66 ? 3.2 : 2.2;
+    ctx.beginPath();
+    ctx.moveTo(p.x + Math.cos(a) * 4, p.y + Math.sin(a) * 4);
+    ctx.lineTo(p.x + Math.cos(a) * длина, p.y + Math.sin(a) * длина);
+    ctx.stroke();
+    if (k > 0.75) {                       // блик на самом острие перед ударом
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath();
+        ctx.arc(p.x + Math.cos(a) * длина, p.y + Math.sin(a) * длина, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
 function drawMarks(ctx, world) {
     ctx.textAlign = 'center';
+    drawKnife(ctx, world);
     for (const g of world.guards) {
-        if (isOut(g)) continue;
+        if (isOut(g)) {
+            // Снятый страж: короткая крупная надпись, чтобы момент читался и
+            // на карточке витрины (64×40), а не только вблизи. Обычные метки
+            // ниже рисуются только у живых, поэтому здесь своя ветка.
+            if (g.outSay) {
+                ctx.font = 'bold 15px system-ui, sans-serif';
+                ctx.fillStyle = g.dead ? '#ff6b6b' : '#ffd479';
+                ctx.strokeStyle = 'rgba(6,10,18,0.85)';
+                ctx.lineWidth = 4;
+                ctx.strokeText(g.outSay, g.x, g.y - 22);
+                ctx.fillText(g.outSay, g.x, g.y - 22);
+            }
+            continue;
+        }
         if (g.mark) {
             ctx.font = 'bold 16px system-ui, sans-serif';
             ctx.fillStyle = g.mark === '!' ? '#ff5c5c' : '#ffce5c';

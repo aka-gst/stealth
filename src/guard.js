@@ -138,6 +138,11 @@ export function knockOut(g, lethal) {
     g.state = lethal ? 'dead' : 'down';
     g.mark = null;
     g.say = '';
+    // Просьба Сергея 5 сентября: «непонятно, что подходим и убиваем — надпись
+    // сверху „убит" в момент снятия». Обычная реплика тут не годится: она
+    // рисуется только у живых.
+    g.outSay = lethal ? 'УБИТ' : 'СНЯТ';
+    g.outSayT = 1.6;
 }
 
 function steer(g, dx, dy, speed, dt) {
@@ -178,6 +183,12 @@ function sweep(g, dt) {
 }
 
 export function updateGuard(g, ctx, dt) {
+    // Надпись о снятии живёт и у мёртвого: обычные метки гаснут в ветке ниже,
+    // а до неё убитый не доходит — функция для него сразу возвращается.
+    if (g.outSayT > 0) {
+        g.outSayT = Math.max(0, g.outSayT - dt);
+        if (g.outSayT <= 0) g.outSay = '';
+    }
     if (g.dead) return;
 
     g.markT = Math.max(0, g.markT - dt);
