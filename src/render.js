@@ -16,7 +16,7 @@ import { TILE, VIEW, GUARD, LIGHT, PLAYER, CAMERA, TRACKS } from './tuning.js';
 import { WALL, CRATE, GRASS, EXIT, GRAVEL, SOFT, tileAt, zoneAt } from './level.js';
 import { coneShape, sightReach } from './vision.js';
 import { lightShape, lightOn } from './light.js';
-import { moodOf, isOut } from './guard.js';
+import { moodOf, isOut, FALL } from './guard.js';
 import { ALARM_NAMES, CALM, ALERT, SEARCH, CAUTION, sightMul } from './alarm.js';
 import { rankOf, gateOpen } from './world.js';
 
@@ -49,6 +49,15 @@ const MOOD_CONE = {
     calm: 'rgba(120, 175, 255, 0.045)',
     suspect: 'rgba(255, 196, 60, 0.065)',
     alert: 'rgba(255, 70, 70, 0.09)',
+};
+
+// Витринная палитра конуса: та же, вчетверо плотнее. Поднимать яркость
+// через globalAlpha нельзя — он зажат в единицу, и 3.2 читается как 1,
+// то есть заливка становится непрозрачной и закрывает пол.
+const MOOD_CONE_ВИТРИНА = {
+    calm: 'rgba(120, 175, 255, 0.18)',
+    suspect: 'rgba(255, 196, 60, 0.26)',
+    alert: 'rgba(255, 70, 70, 0.34)',
 };
 
 const MOOD_EDGE = {
@@ -433,10 +442,17 @@ function drawCones(ctx, world) {
         const reach = sightReach(world.player.lit, mul);
         const pts = coneShape(world.level, g, reach);
         conePath(ctx, g, pts);
-        ctx.fillStyle = MOOD_CONE[mood] ?? MOOD_CONE.calm;
+        // В ИГРЕ конус нарочно бледный: он подсказка, а не украшение, и
+        // яркая заливка забивала бы пол и тени. Но на полосе карточки в
+        // 271 точку от заливки в 4.5% прозрачности не остаётся ничего, а
+        // Сергей просил показать стража «вместе со своим конусом зрения».
+        // Поэтому яркость поднимает ТОЛЬКО витринный режим, который ставит
+        // сцена; обычная игра идёт прежним путём.
+        const палитра = world.витрина ? MOOD_CONE_ВИТРИНА : MOOD_CONE;
+        ctx.fillStyle = палитра[mood] ?? палитра.calm;
         ctx.fill();
         ctx.strokeStyle = MOOD_EDGE[mood] ?? MOOD_EDGE.calm;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = world.витрина ? 1.5 : 1;
         ctx.stroke();
     }
 }
@@ -570,6 +586,24 @@ function figure(ctx, x, y, angle, radius, body, edge) {
 
 function drawGuards(ctx, world) {
     for (const g of world.guards) {
+        // ПАДЕНИЕ показываем позами, а не плавным сжатием. Ступени читаются
+        // как движение даже на полосе карточки в 271 точку, где плавная
+        // интерполяция сливается в одно пятно.
+        if (g.falling) {
+            const шаг = Math.min(FALL.poses - 1,
+                Math.floor((g.fallT / FALL.time) * FALL.poses));
+            const k = шаг / (FALL.poses - 1);          // 0 — ещё стоит, 1 — лёг
+            ctx.save();
+            // Фигура заваливается: наклон растёт, высота съедается, тело
+            // вытягивается вдоль земли.
+            ctx.translate(g.x, g.y);
+            ctx.rotate(k * 0.9);
+            ctx.scale(1 + k * 0.35, 1 - k * 0.45);
+            ctx.translate(-g.x, -g.y);
+            figure(ctx, g.x, g.y, g.angle, GUARD.radius, COL.guard, '#2b3140');
+            ctx.restore();
+            continue;
+        }
         if (isOut(g)) {
             ctx.save();
             ctx.globalAlpha = g.stowed ? 0.35 : 1;

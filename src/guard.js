@@ -114,6 +114,9 @@ export function hearNoise(g, x, y, radius) {
  */
 export function noticeBody(g, body, alarm, scale = 1) {
     if (isOut(g) || g.state === 'chase') return false;
+    // Падающий ещё не труп: пока он оседает, поднимать тревогу не над чем.
+    // Иначе страж кричит «Труп!» о фигуре, которая на экране ещё стоит.
+    if (body.falling) return false;
     disturb(alarm, body.x, body.y, scale);
     // Отсчёт заводится один раз на тело: обход тел идёт каждые 0.2 с, и
     // без этой проверки он сбрасывал бы таймер, который сам же запустил, —
@@ -130,6 +133,9 @@ export function noticeBody(g, body, alarm, scale = 1) {
     return true;
 }
 
+/** Сколько длится падение и на сколько поз оно разложено. */
+export const FALL = { time: 0.45, poses: 4 };
+
 export function knockOut(g, lethal) {
     if (lethal) g.dead = true;
     else g.down = true;
@@ -138,11 +144,16 @@ export function knockOut(g, lethal) {
     g.state = lethal ? 'dead' : 'down';
     g.mark = null;
     g.say = '';
-    // Просьба Сергея 5 сентября: «непонятно, что подходим и убиваем — надпись
-    // сверху „убит" в момент снятия». Обычная реплика тут не годится: она
-    // рисуется только у живых.
-    g.outSay = lethal ? 'УБИТ' : 'СНЯТ';
-    g.outSayT = 1.6;
+    // ПАДЕНИЕ, а не мгновенная смена картинки. Слова Сергея 6 сентября:
+    // «после этого враг падает трупом» — без падения удар читается как
+    // подмена спрайта, и на витрине это выглядит бракованной анимацией.
+    // Пока страж падает, он ЕЩЁ НЕ ТРУП: другие на него не реагируют, и
+    // надпись не появляется — иначе «УБИТ» висит над стоящей фигурой.
+    g.falling = true;
+    g.fallT = 0;
+    g.outSay = '';
+    g.outSayT = 0;
+    g.deathSay = lethal ? 'УБИТ' : 'СНЯТ';
 }
 
 function steer(g, dx, dy, speed, dt) {
@@ -188,6 +199,18 @@ export function updateGuard(g, ctx, dt) {
     if (g.outSayT > 0) {
         g.outSayT = Math.max(0, g.outSayT - dt);
         if (g.outSayT <= 0) g.outSay = '';
+    }
+    // Падение тикает и у мёртвого: до общей ветки ниже он не доходит.
+    // Надпись зажигается ПО ОКОНЧАНИИ падения — это и есть та точка, где
+    // человек понимает, что произошло.
+    if (g.falling) {
+        g.fallT += dt;
+        if (g.fallT >= FALL.time) {
+            g.falling = false;
+            g.fallT = FALL.time;
+            g.outSay = g.deathSay || '';
+            g.outSayT = 1.6;
+        }
     }
     if (g.dead) return;
 
